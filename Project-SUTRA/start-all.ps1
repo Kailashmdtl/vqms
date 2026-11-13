@@ -10,6 +10,15 @@
 param([switch]$Acceptance)
 
 $root = $PSScriptRoot
+
+# Local settings from .env (KEY=value lines; # comments). Empty values are skipped so the service defaults apply.
+if (Test-Path "$root\.env") {
+    foreach ($line in Get-Content "$root\.env") {
+        if ($line -match '^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*?)\s*$' -and $Matches[2] -ne '') {
+            Set-Item "env:$($Matches[1])" $Matches[2].Trim('"', "'")
+        }
+    }
+}
 $mvn = if (Get-Command mvn -ErrorAction SilentlyContinue) { "mvn" } else { "C:\tools\apache-maven-3.9.11\bin\mvn.cmd" }
 
 # port offset: the acceptance copy runs every service 1000 ports higher
