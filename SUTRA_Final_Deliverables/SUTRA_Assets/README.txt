@@ -1,1 +1,0 @@
-The SUTRA emblem is the original project logo copied from docs/brand/sutra-logo-512.png. Diagrams, tables, cards and text are editable PowerPoint objects; the logo is the only raster asset embedded in the deck.\n
