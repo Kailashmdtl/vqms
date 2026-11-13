@@ -1,0 +1,35 @@
+GROUP,PACKAGE,CLASS,INSTRUCTION_MISSED,INSTRUCTION_COVERED,BRANCH_MISSED,BRANCH_COVERED,LINE_MISSED,LINE_COVERED,COMPLEXITY_MISSED,COMPLEXITY_COVERED,METHOD_MISSED,METHOD_COVERED
+SUTRA reporting service,com.sutra.reporting.dto.request,AssistantRequests.ChatRequest,0,15,0,0,0,1,0,1,0,1
+SUTRA reporting service,com.sutra.reporting.dto.request,AssistantRequests.ChatTurn,0,9,0,0,0,1,0,1,0,1
+SUTRA reporting service,com.sutra.reporting.client,MasterDataClient,184,0,6,0,26,0,16,0,13,0
+SUTRA reporting service,com.sutra.reporting.client,PlatformClient.new ParameterizedTypeReference() {...},6,0,0,0,1,0,1,0,1,0
+SUTRA reporting service,com.sutra.reporting.client,PlatformClient.new ParameterizedTypeReference() {...},6,0,0,0,1,0,1,0,1,0
+SUTRA reporting service,com.sutra.reporting.client,MasterDataClient.SubEntitySnapshot,18,0,0,0,1,0,1,0,1,0
+SUTRA reporting service,com.sutra.reporting.client,PlatformClient.new ParameterizedTypeReference() {...},6,0,0,0,1,0,1,0,1,0
+SUTRA reporting service,com.sutra.reporting.client,PlatformClient.new ParameterizedTypeReference() {...},6,0,0,0,1,0,1,0,1,0
+SUTRA reporting service,com.sutra.reporting.client,MasterDataClient.EntitySnapshot,15,0,0,0,1,0,1,0,1,0
+SUTRA reporting service,com.sutra.reporting.client,PlatformClient,579,5,12,0,60,1,49,1,43,1
+SUTRA reporting service,com.sutra.reporting.client,MasterDataClient.CustomerSnapshot,18,0,0,0,1,0,1,0,1,0
+SUTRA reporting service,com.sutra.reporting.client,PlatformClient.new ParameterizedTypeReference() {...},6,0,0,0,1,0,1,0,1,0
+SUTRA reporting service,com.sutra.reporting.client,PlatformClient.new ParameterizedTypeReference() {...},0,3,0,0,0,1,0,1,0,1
+SUTRA reporting service,com.sutra.reporting.client,MasterDataClient.VendorSnapshot,15,0,0,0,1,0,1,0,1,0
+SUTRA reporting service,com.sutra.reporting.client,PlatformClient.new ParameterizedTypeReference() {...},6,0,0,0,1,0,1,0,1,0
+SUTRA reporting service,com.sutra.reporting.client,PlatformClient.new ParameterizedTypeReference() {...},6,0,0,0,1,0,1,0,1,0
+SUTRA reporting service,com.sutra.reporting.client,MasterDataClient.Stats,0,12,0,0,0,1,0,1,0,1
+SUTRA reporting service,com.sutra.reporting.controller,ReportingController,50,0,0,0,14,0,5,0,5,0
+SUTRA reporting service,com.sutra.reporting.controller,AssistantController,15,0,0,0,5,0,3,0,3,0
+SUTRA reporting service,com.sutra.reporting.exception,AiServiceException,7,6,0,0,2,2,1,1,1,1
+SUTRA reporting service,com.sutra.reporting.dto.response,AssistantResponses.ChatResponse,0,18,0,0,0,3,0,2,0,2
+SUTRA reporting service,com.sutra.reporting.dto.response,Badges.VendorBadges,0,9,0,0,0,1,0,1,0,1
+SUTRA reporting service,com.sutra.reporting.dto.response,AwardSummary,7,9,0,0,1,1,1,1,1,1
+SUTRA reporting service,com.sutra.reporting.dto.response,AssistantResponses.AssistantLink,0,12,0,0,0,1,0,1,0,1
+SUTRA reporting service,com.sutra.reporting.dto.response,AssistantResponses.AssistantStatus,0,12,0,0,0,1,0,1,0,1
+SUTRA reporting service,com.sutra.reporting.dto.response,Badges.StaffBadges,0,9,0,0,0,1,0,1,0,1
+SUTRA reporting service,com.sutra.reporting.service.impl,AssistantServiceImpl,665,1432,30,81,99,211,39,59,13,29
+SUTRA reporting service,com.sutra.reporting.service.impl,AwardSummaryServiceImpl,48,638,24,36,5,84,24,16,0,10
+SUTRA reporting service,com.sutra.reporting.service.impl,AssistantServiceImpl.Context,0,12,0,0,0,1,0,1,0,1
+SUTRA reporting service,com.sutra.reporting.service.impl,DashboardServiceImpl,0,76,0,6,0,15,0,5,0,2
+SUTRA reporting service,com.sutra.reporting.service.impl,BadgeServiceImpl,6,179,2,16,1,29,2,15,0,8
+SUTRA reporting service,com.sutra.reporting.service.impl,AwardSummaryServiceImpl.Writer,17,555,6,26,3,103,5,28,0,17
+SUTRA reporting service,com.sutra,ReportingServiceApplication,8,0,0,0,3,0,2,0,2,0
+SUTRA reporting service,com.sutra.reporting.service.internal,AiMessages,0,52,0,0,0,12,0,2,0,2

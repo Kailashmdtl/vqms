@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>TextSimilarity.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">SUTRA extraction service</a> &gt; <a href="index.source.html" class="el_package">com.sutra.extraction.service.internal</a> &gt; <span class="el_source">TextSimilarity.java</span></div><h1>TextSimilarity.java</h1><pre class="source lang-java linenums">package com.sutra.extraction.service.internal;
+
+import java.util.Arrays;
+import java.util.Locale;
+import java.util.Set;
+import java.util.stream.Collectors;
+
+/** Dependency-free token similarity, used when the Python matcher is unavailable. */
+public final class TextSimilarity {
+
+<span class="fc" id="L11">    private static final Set&lt;String&gt; STOP_WORDS = Set.of(&quot;a&quot;, &quot;an&quot;, &quot;and&quot;, &quot;the&quot;, &quot;of&quot;, &quot;for&quot;, &quot;with&quot;, &quot;to&quot;, &quot;in&quot;,</span>
+<span class="fc" id="L12">            &quot;on&quot;, &quot;by&quot;, &quot;per&quot;, &quot;as&quot;, &quot;or&quot;, &quot;x&quot;, &quot;nos&quot;, &quot;no&quot;, &quot;pcs&quot;, &quot;pc&quot;, &quot;qty&quot;, &quot;unit&quot;, &quot;units&quot;, &quot;each&quot;);</span>
+
+    private TextSimilarity() {
+    }
+
+    /**
+     * Blend of Jaccard overlap and containment (how much of the shorter text appears in the longer one),
+     * so &quot;Dell Latitude 5440 laptop&quot; scores high against &quot;Laptop - Dell Latitude 5440, 16GB RAM&quot;.
+     */
+    public static double score(String a, String b) {
+<span class="fc" id="L22">        Set&lt;String&gt; ta = tokens(a);</span>
+<span class="fc" id="L23">        Set&lt;String&gt; tb = tokens(b);</span>
+<span class="pc bpc" id="L24" title="2 of 4 branches missed.">        if (ta.isEmpty() || tb.isEmpty()) {</span>
+<span class="nc" id="L25">            return 0.0;</span>
+        }
+<span class="fc" id="L27">        long common = ta.stream().filter(tb::contains).count();</span>
+<span class="fc" id="L28">        double jaccard = (double) common / (ta.size() + tb.size() - common);</span>
+<span class="fc" id="L29">        double containment = (double) common / Math.min(ta.size(), tb.size());</span>
+<span class="fc" id="L30">        return Math.round((0.4 * jaccard + 0.6 * containment) * 1000.0) / 1000.0;</span>
+    }
+
+    static Set&lt;String&gt; tokens(String text) {
+<span class="pc bpc" id="L34" title="1 of 2 branches missed.">        if (text == null) {</span>
+<span class="nc" id="L35">            return Set.of();</span>
+        }
+<span class="fc" id="L37">        return Arrays.stream(text.toLowerCase(Locale.ROOT).split(&quot;[^a-z0-9.]+&quot;))</span>
+<span class="fc" id="L38">                .map(t -&gt; t.replaceAll(&quot;^\\.+|\\.+$&quot;, &quot;&quot;))</span>
+<span class="pc bpc" id="L39" title="2 of 4 branches missed.">                .filter(t -&gt; !t.isEmpty() &amp;&amp; !STOP_WORDS.contains(t))</span>
+<span class="pc bpc" id="L40" title="1 of 4 branches missed.">                .map(t -&gt; t.length() &gt; 3 &amp;&amp; t.endsWith(&quot;s&quot;) ? t.substring(0, t.length() - 1) : t)</span>
+<span class="fc" id="L41">                .collect(Collectors.toSet());</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.13.202504020838</span></div></body></html>

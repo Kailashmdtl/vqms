@@ -1,0 +1,101 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>JwtCodec.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">SUTRA common</a> &gt; <a href="index.source.html" class="el_package">com.sutra.common.security</a> &gt; <span class="el_source">JwtCodec.java</span></div><h1>JwtCodec.java</h1><pre class="source lang-java linenums"><span class="fc" id="L1">package com.sutra.common.security;</span>
+
+import io.jsonwebtoken.Claims;
+import io.jsonwebtoken.JwtException;
+import io.jsonwebtoken.Jwts;
+import io.jsonwebtoken.security.Keys;
+import java.nio.charset.StandardCharsets;
+import java.time.Instant;
+import java.time.temporal.ChronoUnit;
+import java.util.Collection;
+import java.util.Date;
+import java.util.EnumSet;
+import java.util.Optional;
+import java.util.Set;
+import javax.crypto.SecretKey;
+
+/**
+ * Signs and verifies HS256 tokens. User tokens carry the user id, roles, vendor id and token version, so every
+ * service can authorise a request without calling the auth service. Service tokens live five minutes.
+ */
+public class JwtCodec {
+
+    public static final String TYPE_USER = &quot;user&quot;;
+    public static final String TYPE_SERVICE = &quot;service&quot;;
+    static final long SERVICE_TOKEN_MINUTES = 5;
+
+    private final SecretKey key;
+    private final long expirationMinutes;
+
+<span class="fc" id="L30">    public JwtCodec(SecurityProperties properties) {</span>
+<span class="fc" id="L31">        String secret = properties.jwtSecret();</span>
+<span class="pc bpc" id="L32" title="1 of 4 branches missed.">        if (secret == null || secret.getBytes(StandardCharsets.UTF_8).length &lt; 32) {</span>
+<span class="fc" id="L33">            throw new IllegalStateException(&quot;sutra.security.jwt-secret must be at least 32 bytes&quot;);</span>
+        }
+<span class="fc" id="L35">        this.key = Keys.hmacShaKeyFor(secret.getBytes(StandardCharsets.UTF_8));</span>
+<span class="fc" id="L36">        this.expirationMinutes = properties.jwtExpirationMinutes();</span>
+<span class="fc" id="L37">    }</span>
+
+    /** The verified content of a token. */
+    public record Token(String type, SutraUserPrincipal principal, Instant expiresAt) {
+
+        public boolean isService() {
+<span class="fc" id="L43">            return TYPE_SERVICE.equals(type);</span>
+        }
+    }
+
+    public String issue(SutraUserPrincipal user) {
+<span class="fc" id="L48">        Instant now = Instant.now();</span>
+<span class="fc" id="L49">        return Jwts.builder()</span>
+<span class="fc" id="L50">                .subject(user.getUsername())</span>
+<span class="fc" id="L51">                .claim(&quot;typ&quot;, TYPE_USER)</span>
+<span class="fc" id="L52">                .claim(&quot;uid&quot;, user.getId())</span>
+<span class="fc" id="L53">                .claim(&quot;roles&quot;, user.getRoles().stream().map(Enum::name).sorted().toList())</span>
+<span class="fc" id="L54">                .claim(&quot;vid&quot;, user.getVendorId())</span>
+<span class="fc" id="L55">                .claim(&quot;ver&quot;, user.getTokenVersion())</span>
+<span class="fc" id="L56">                .issuedAt(Date.from(now))</span>
+<span class="fc" id="L57">                .expiration(Date.from(now.plus(expirationMinutes, ChronoUnit.MINUTES)))</span>
+<span class="fc" id="L58">                .signWith(key)</span>
+<span class="fc" id="L59">                .compact();</span>
+    }
+
+    public String issueService(String serviceName) {
+<span class="fc" id="L63">        Instant now = Instant.now();</span>
+<span class="fc" id="L64">        return Jwts.builder()</span>
+<span class="fc" id="L65">                .subject(serviceName)</span>
+<span class="fc" id="L66">                .claim(&quot;typ&quot;, TYPE_SERVICE)</span>
+<span class="fc" id="L67">                .issuedAt(Date.from(now))</span>
+<span class="fc" id="L68">                .expiration(Date.from(now.plus(SERVICE_TOKEN_MINUTES, ChronoUnit.MINUTES)))</span>
+<span class="fc" id="L69">                .signWith(key)</span>
+<span class="fc" id="L70">                .compact();</span>
+    }
+
+    /** The token's content if it is correctly signed and unexpired. */
+    public Optional&lt;Token&gt; verify(String token) {
+        try {
+<span class="fc" id="L76">            Claims c = Jwts.parser().verifyWith(key).build().parseSignedClaims(token).getPayload();</span>
+<span class="fc" id="L77">            Instant expires = c.getExpiration().toInstant();</span>
+<span class="fc bfc" id="L78" title="All 2 branches covered.">            if (TYPE_SERVICE.equals(c.get(&quot;typ&quot;, String.class))) {</span>
+<span class="fc" id="L79">                return Optional.of(new Token(TYPE_SERVICE, SutraUserPrincipal.service(c.getSubject()), expires));</span>
+            }
+<span class="fc" id="L81">            Set&lt;RoleName&gt; roles = EnumSet.noneOf(RoleName.class);</span>
+<span class="pc bpc" id="L82" title="1 of 2 branches missed.">            if (c.get(&quot;roles&quot;) instanceof Collection&lt;?&gt; list) {</span>
+<span class="fc bfc" id="L83" title="All 2 branches covered.">                for (Object r : list) {</span>
+<span class="fc" id="L84">                    RoleName role = RoleName.valueOf(String.valueOf(r));</span>
+<span class="fc bfc" id="L85" title="All 2 branches covered.">                    if (role != RoleName.SERVICE) {</span>
+<span class="fc" id="L86">                        roles.add(role); // a user token can never claim to be a service</span>
+                    }
+                }
+            }
+<span class="fc" id="L90">            Number uid = c.get(&quot;uid&quot;, Number.class);</span>
+<span class="fc" id="L91">            Number vid = c.get(&quot;vid&quot;, Number.class);</span>
+<span class="fc" id="L92">            Number ver = c.get(&quot;ver&quot;, Number.class);</span>
+<span class="pc bpc" id="L93" title="1 of 2 branches missed.">            SutraUserPrincipal principal = new SutraUserPrincipal(uid == null ? null : uid.longValue(), c.getSubject(),</span>
+<span class="pc bpc" id="L94" title="1 of 4 branches missed.">                    null, true, roles, vid == null ? null : vid.longValue(), ver == null ? 0 : ver.longValue());</span>
+<span class="fc" id="L95">            return Optional.of(new Token(TYPE_USER, principal, expires));</span>
+<span class="fc" id="L96">        } catch (JwtException | IllegalArgumentException e) {</span>
+<span class="fc" id="L97">            return Optional.empty();</span>
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.13.202504020838</span></div></body></html>

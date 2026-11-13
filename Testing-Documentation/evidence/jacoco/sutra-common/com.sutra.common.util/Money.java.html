@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>Money.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">SUTRA common</a> &gt; <a href="index.source.html" class="el_package">com.sutra.common.util</a> &gt; <span class="el_source">Money.java</span></div><h1>Money.java</h1><pre class="source lang-java linenums">package com.sutra.common.util;
+
+import java.math.BigDecimal;
+import java.math.RoundingMode;
+
+/** Decimal helpers. All money is BigDecimal, rounded HALF_UP to 2 places at the end of each calculation. */
+public final class Money {
+
+<span class="fc" id="L9">    public static final BigDecimal HUNDRED = BigDecimal.valueOf(100);</span>
+    /** Absolute tolerance when comparing a stated amount with a calculated one (rounding on vendor documents). */
+<span class="fc" id="L11">    public static final BigDecimal ABSOLUTE_TOLERANCE = new BigDecimal(&quot;0.05&quot;);</span>
+    /** Relative tolerance (0.1%) for large amounts. */
+<span class="fc" id="L13">    public static final BigDecimal RELATIVE_TOLERANCE = new BigDecimal(&quot;0.001&quot;);</span>
+
+    private Money() {
+    }
+
+    public static BigDecimal round(BigDecimal value) {
+<span class="fc bfc" id="L19" title="All 2 branches covered.">        return value == null ? null : value.setScale(2, RoundingMode.HALF_UP);</span>
+    }
+
+    public static BigDecimal nz(BigDecimal value) {
+<span class="fc bfc" id="L23" title="All 2 branches covered.">        return value == null ? BigDecimal.ZERO : value;</span>
+    }
+
+    public static BigDecimal percentOf(BigDecimal base, BigDecimal percent) {
+<span class="fc" id="L27">        return base.multiply(percent).divide(HUNDRED, 6, RoundingMode.HALF_UP);</span>
+    }
+
+    /** True when {@code a} and {@code b} are equal within the absolute or relative tolerance. */
+    public static boolean approximatelyEqual(BigDecimal a, BigDecimal b) {
+<span class="fc bfc" id="L32" title="All 4 branches covered.">        if (a == null || b == null) {</span>
+<span class="fc" id="L33">            return false;</span>
+        }
+<span class="fc" id="L35">        BigDecimal diff = a.subtract(b).abs();</span>
+<span class="fc bfc" id="L36" title="All 2 branches covered.">        if (diff.compareTo(ABSOLUTE_TOLERANCE) &lt;= 0) {</span>
+<span class="fc" id="L37">            return true;</span>
+        }
+<span class="fc" id="L39">        BigDecimal scale = a.abs().max(b.abs());</span>
+<span class="fc bfc" id="L40" title="All 2 branches covered.">        return diff.compareTo(scale.multiply(RELATIVE_TOLERANCE)) &lt;= 0;</span>
+    }
+
+    /** (value - base) / base * 100, or null when base is zero/null. */
+    public static BigDecimal percentDifference(BigDecimal value, BigDecimal base) {
+<span class="fc bfc" id="L45" title="All 6 branches covered.">        if (value == null || base == null || base.signum() == 0) {</span>
+<span class="fc" id="L46">            return null;</span>
+        }
+<span class="fc" id="L48">        return value.subtract(base).multiply(HUNDRED).divide(base, 2, RoundingMode.HALF_UP);</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.13.202504020838</span></div></body></html>

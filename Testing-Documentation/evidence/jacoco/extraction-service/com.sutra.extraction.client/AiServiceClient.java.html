@@ -1,0 +1,124 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>AiServiceClient.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">SUTRA extraction service</a> &gt; <a href="index.source.html" class="el_package">com.sutra.extraction.client</a> &gt; <span class="el_source">AiServiceClient.java</span></div><h1>AiServiceClient.java</h1><pre class="source lang-java linenums"><span class="fc" id="L1">package com.sutra.extraction.client;</span>
+
+import com.sutra.extraction.service.internal.ExtractionInput;
+import com.sutra.api.extraction.ExtractedQuotation;
+import com.sutra.extraction.config.AiProperties;
+import com.sutra.extraction.exception.QuotationProcessingException;
+import java.net.http.HttpClient;
+import java.time.Duration;
+import java.util.List;
+import java.util.Map;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.core.io.ByteArrayResource;
+import org.springframework.http.MediaType;
+import org.springframework.http.client.JdkClientHttpRequestFactory;
+import org.springframework.stereotype.Component;
+import org.springframework.util.LinkedMultiValueMap;
+import org.springframework.util.MultiValueMap;
+import org.springframework.web.client.RestClient;
+import org.springframework.web.client.RestClientException;
+import org.springframework.web.client.RestClientResponseException;
+
+/** HTTP client for the Python service. Only file names and sizes are ever logged. */
+@Component
+public class AiServiceClient implements DocumentProcessingClient {
+
+<span class="fc" id="L27">    private static final Logger log = LoggerFactory.getLogger(AiServiceClient.class);</span>
+
+    private final RestClient restClient;
+
+<span class="fc" id="L31">    public AiServiceClient(AiProperties properties, RestClient.Builder builder) {</span>
+<span class="fc" id="L32">        Duration timeout = Duration.ofSeconds(properties.ai().serviceTimeoutSeconds());</span>
+<span class="fc" id="L33">        JdkClientHttpRequestFactory factory = new JdkClientHttpRequestFactory(</span>
+<span class="fc" id="L34">                HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build());</span>
+<span class="fc" id="L35">        factory.setReadTimeout(timeout);</span>
+<span class="fc" id="L36">        this.restClient = builder.baseUrl(properties.ai().serviceUrl()).requestFactory(factory).build();</span>
+<span class="fc" id="L37">    }</span>
+
+    @Override
+    public ParsedDocument parse(String fileName, byte[] content) {
+<span class="fc" id="L41">        return post(&quot;/parse&quot;, fileBody(fileName, content), ParsedDocument.class, fileName);</span>
+    }
+
+    @Override
+    public List&lt;MatchScore&gt; match(List&lt;MatchRequestItem&gt; requestItems, List&lt;MatchQuotedItem&gt; quotedItems) {
+        try {
+<span class="fc" id="L47">            MatchResponse response = restClient.post().uri(&quot;/match&quot;)</span>
+<span class="fc" id="L48">                    .contentType(MediaType.APPLICATION_JSON)</span>
+<span class="fc" id="L49">                    .body(Map.of(&quot;requestItems&quot;, requestItems, &quot;quotedItems&quot;, quotedItems))</span>
+<span class="fc" id="L50">                    .retrieve()</span>
+<span class="fc" id="L51">                    .body(MatchResponse.class);</span>
+<span class="pc bpc" id="L52" title="1 of 2 branches missed.">            return response == null ? List.of() : response.scores();</span>
+<span class="nc" id="L53">        } catch (RestClientException e) {</span>
+<span class="nc" id="L54">            throw new QuotationProcessingException(&quot;Item matching service failed: &quot; + e.getMessage(), e);</span>
+        }
+    }
+
+    @Override
+    public ExtractedQuotation extractWithRules(List&lt;ExtractionInput.Document&gt; documents) {
+<span class="fc" id="L60">        MultiValueMap&lt;String, Object&gt; body = new LinkedMultiValueMap&lt;&gt;();</span>
+<span class="fc bfc" id="L61" title="All 2 branches covered.">        for (ExtractionInput.Document doc : documents) {</span>
+<span class="fc" id="L62">            body.add(&quot;files&quot;, fileResource(doc.fileName(), doc.content()));</span>
+        }
+<span class="fc" id="L64">        String names = String.join(&quot;, &quot;, documents.stream().map(ExtractionInput.Document::fileName).toList());</span>
+<span class="fc" id="L65">        return post(&quot;/extract&quot;, body, ExtractedQuotation.class, names);</span>
+    }
+
+    @Override
+    public boolean isAvailable() {
+        try {
+<span class="fc" id="L71">            restClient.get().uri(&quot;/health&quot;).retrieve().toBodilessEntity();</span>
+<span class="fc" id="L72">            return true;</span>
+<span class="fc" id="L73">        } catch (RestClientException e) {</span>
+<span class="fc" id="L74">            return false;</span>
+        }
+    }
+
+    private &lt;T&gt; T post(String path, MultiValueMap&lt;String, Object&gt; body, Class&lt;T&gt; type, String fileName) {
+        try {
+<span class="fc" id="L80">            T result = restClient.post().uri(path)</span>
+<span class="fc" id="L81">                    .contentType(MediaType.MULTIPART_FORM_DATA)</span>
+<span class="fc" id="L82">                    .body(body)</span>
+<span class="fc" id="L83">                    .retrieve()</span>
+<span class="fc" id="L84">                    .body(type);</span>
+<span class="pc bpc" id="L85" title="1 of 2 branches missed.">            if (result == null) {</span>
+<span class="nc" id="L86">                throw new QuotationProcessingException(&quot;Document service returned an empty response for &quot; + path);</span>
+            }
+<span class="fc" id="L88">            return result;</span>
+<span class="fc" id="L89">        } catch (RestClientResponseException e) {</span>
+<span class="fc" id="L90">            log.warn(&quot;Document service {} failed for '{}' with HTTP {}&quot;, path, fileName, e.getStatusCode().value());</span>
+<span class="fc" id="L91">            throw new QuotationProcessingException(</span>
+<span class="fc" id="L92">                    &quot;Document service could not read the file: &quot; + summarise(e.getResponseBodyAsString()), e);</span>
+<span class="nc" id="L93">        } catch (RestClientException e) {</span>
+<span class="nc" id="L94">            throw new QuotationProcessingException(</span>
+<span class="nc" id="L95">                    &quot;Document processing service is unavailable. Start the AI service and retry.&quot;, e);</span>
+        }
+    }
+
+    private static MultiValueMap&lt;String, Object&gt; fileBody(String fileName, byte[] content) {
+<span class="fc" id="L100">        MultiValueMap&lt;String, Object&gt; body = new LinkedMultiValueMap&lt;&gt;();</span>
+<span class="fc" id="L101">        body.add(&quot;file&quot;, fileResource(fileName, content));</span>
+<span class="fc" id="L102">        return body;</span>
+    }
+
+    private static ByteArrayResource fileResource(String fileName, byte[] content) {
+<span class="fc" id="L106">        return new ByteArrayResource(content) {</span>
+            @Override
+            public String getFilename() {
+<span class="fc" id="L109">                return fileName;</span>
+            }
+        };
+    }
+
+    private static String summarise(String body) {
+<span class="pc bpc" id="L115" title="2 of 4 branches missed.">        if (body == null || body.isBlank()) {</span>
+<span class="nc" id="L116">            return &quot;no details&quot;;</span>
+        }
+<span class="pc bpc" id="L118" title="1 of 2 branches missed.">        return body.length() &gt; 300 ? body.substring(0, 300) : body;</span>
+    }
+
+    record MatchResponse(List&lt;MatchScore&gt; scores) {
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.13.202504020838</span></div></body></html>

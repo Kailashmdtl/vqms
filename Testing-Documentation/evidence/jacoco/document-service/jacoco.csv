@@ -1,0 +1,11 @@
+GROUP,PACKAGE,CLASS,INSTRUCTION_MISSED,INSTRUCTION_COVERED,BRANCH_MISSED,BRANCH_COVERED,LINE_MISSED,LINE_COVERED,COMPLEXITY_MISSED,COMPLEXITY_COVERED,METHOD_MISSED,METHOD_COVERED
+SUTRA document service,com.sutra.document.entity,Document.Status,0,24,0,0,0,1,0,1,0,1
+SUTRA document service,com.sutra.document.entity,Document,9,9,0,0,1,3,1,1,1,1
+SUTRA document service,com.sutra.document.exception,UnsupportedQuotationFileException,0,6,0,0,0,2,0,1,0,1
+SUTRA document service,com.sutra.document.exception,InvalidQuotationFileException,0,6,0,0,0,2,0,1,0,1
+SUTRA document service,com.sutra.document.service.impl,DocumentServiceImpl,99,210,20,10,18,47,18,12,6,9
+SUTRA document service,com.sutra.document.service.internal,OrphanDocumentCleanupJob,11,0,0,0,5,0,2,0,2,0
+SUTRA document service,com.sutra.document.service.internal,FileContentValidator,41,309,13,26,7,49,12,17,0,8
+SUTRA document service,com.sutra.document.config,DocumentProperties,4,19,2,2,0,4,2,1,0,1
+SUTRA document service,com.sutra,DocumentServiceApplication,8,0,0,0,3,0,2,0,2,0
+SUTRA document service,com.sutra.document.controller,InternalDocumentController,72,0,0,0,16,0,7,0,7,0

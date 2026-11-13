@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>GatewayApplication.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">SUTRA API gateway</a> &gt; <a href="index.source.html" class="el_package">com.sutra.gateway</a> &gt; <span class="el_source">GatewayApplication.java</span></div><h1>GatewayApplication.java</h1><pre class="source lang-java linenums">package com.sutra.gateway;
+
+import com.sutra.common.security.JwtCodec;
+import com.sutra.common.security.SecurityProperties;
+import com.sutra.common.web.CorrelationIdFilter;
+import org.springframework.boot.SpringApplication;
+import org.springframework.boot.autoconfigure.SpringBootApplication;
+import org.springframework.boot.context.properties.EnableConfigurationProperties;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Import;
+
+/**
+ * SUTRA API gateway: the only address the browser talks to. It routes {@code /api/**} to the owning service,
+ * handles CORS, gives every request an id, and refuses tokens of users who were deactivated or changed.
+ */
+@SpringBootApplication
+@EnableConfigurationProperties({GatewayProperties.class, SecurityProperties.class})
+@Import(CorrelationIdFilter.class)
+<span class="nc" id="L19">public class GatewayApplication {</span>
+
+    public static void main(String[] args) {
+<span class="nc" id="L22">        SpringApplication.run(GatewayApplication.class, args);</span>
+<span class="nc" id="L23">    }</span>
+
+    @Bean
+    java.time.Clock clock() {
+<span class="nc" id="L27">        return java.time.Clock.systemDefaultZone();</span>
+    }
+
+    @Bean
+    JwtCodec jwtCodec(SecurityProperties properties) {
+<span class="nc" id="L32">        return new JwtCodec(properties);</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.13.202504020838</span></div></body></html>

@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>ComparisonReport.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">SUTRA comparison service</a> &gt; <a href="index.source.html" class="el_package">com.sutra.comparison.entity</a> &gt; <span class="el_source">ComparisonReport.java</span></div><h1>ComparisonReport.java</h1><pre class="source lang-java linenums">package com.sutra.comparison.entity;
+
+import jakarta.persistence.CascadeType;
+import com.sutra.comparison.entity.base.BaseEntity;
+import jakarta.persistence.Column;
+import jakarta.persistence.Embedded;
+import jakarta.persistence.AttributeOverride;
+import jakarta.persistence.Entity;
+import jakarta.persistence.OneToMany;
+import jakarta.persistence.Table;
+import java.time.Instant;
+import java.util.ArrayList;
+import java.util.List;
+import lombok.Getter;
+import lombok.Setter;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
+
+/** An immutable snapshot of a side-by-side comparison. A new version is created on every regeneration. */
+@Entity
+@Table(name = &quot;comparison_report&quot;)
+@Getter
+@Setter
+<span class="fc" id="L24">public class ComparisonReport extends BaseEntity {</span>
+
+    @Column(name = &quot;purchase_request_id&quot;, nullable = false, updatable = false)
+    private Long purchaseRequestId;
+
+    @Column(name = &quot;report_version&quot;, nullable = false)
+    private Integer reportVersion;
+
+    @Embedded
+    @AttributeOverride(name = &quot;id&quot;, column = @Column(name = &quot;generated_by_id&quot;, nullable = false))
+    @AttributeOverride(name = &quot;username&quot;, column = @Column(name = &quot;generated_by_name&quot;, nullable = false))
+    private UserRef generatedBy;
+
+    @Column(name = &quot;generated_at&quot;, nullable = false)
+<span class="fc" id="L38">    private Instant generatedAt = Instant.now();</span>
+
+    /** Lowest grand total among quotations that cover every requested item. Informational only - never an award. */
+    @Column(name = &quot;lowest_complete_quotation_id&quot;)
+    private Long lowestCompleteQuotationId;
+
+    /** Full comparison matrix serialised from {@code ComparisonResult}. */
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(nullable = false, columnDefinition = &quot;jsonb&quot;)
+    private String details;
+
+    @OneToMany(mappedBy = &quot;comparisonReport&quot;, cascade = CascadeType.ALL, orphanRemoval = true)
+<span class="fc" id="L50">    private List&lt;ComparisonQuotation&gt; quotations = new ArrayList&lt;&gt;();</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.13.202504020838</span></div></body></html>

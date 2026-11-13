@@ -1,0 +1,47 @@
+GROUP,PACKAGE,CLASS,INSTRUCTION_MISSED,INSTRUCTION_COVERED,BRANCH_MISSED,BRANCH_COVERED,LINE_MISSED,LINE_COVERED,COMPLEXITY_MISSED,COMPLEXITY_COVERED,METHOD_MISSED,METHOD_COVERED
+SUTRA extraction service,com.sutra.extraction.service.internal,GroqQuotationExtractor,36,281,9,17,5,57,11,13,2,9
+SUTRA extraction service,com.sutra.extraction.service.internal,TextSimilarity,13,199,6,8,2,15,6,7,0,6
+SUTRA extraction service,com.sutra.extraction.service.internal,ExtractionInput.RequestedItem,0,21,0,0,0,1,0,1,0,1
+SUTRA extraction service,com.sutra.extraction.service.internal,RulesQuotationExtractor,48,0,0,0,11,0,6,0,6,0
+SUTRA extraction service,com.sutra.extraction.service.internal,ExtractionInput.Document,10,12,0,0,1,1,1,1,1,1
+SUTRA extraction service,com.sutra.extraction.service.internal,ExtractionEngines,16,361,8,38,1,61,8,26,0,11
+SUTRA extraction service,com.sutra.extraction.service.internal,ExtractionInput,10,54,1,1,2,8,2,4,1,4
+SUTRA extraction service,com.sutra.extraction.service.internal,RfqDraftSchema,189,0,0,0,25,0,2,0,2,0
+SUTRA extraction service,com.sutra.extraction.service.internal,HybridItemMatcher,8,389,10,40,2,67,10,25,0,10
+SUTRA extraction service,com.sutra.extraction.service.internal,PdfOcrReader,375,99,24,12,67,26,20,9,5,6
+SUTRA extraction service,com.sutra.extraction.service.internal,ExtractionSchema,0,398,0,2,0,51,0,7,0,6
+SUTRA extraction service,com.sutra.extraction.service.internal,PdfOcrReader.OutputStreamSink,7,0,0,0,3,0,3,0,3,0
+SUTRA extraction service,com.sutra.extraction.service.internal,QuotationExtractor,4,0,0,0,1,0,1,0,1,0
+SUTRA extraction service,com.sutra.extraction.service.internal,ExtractionEngines.Extraction,0,12,0,0,0,1,0,1,0,1
+SUTRA extraction service,com.sutra.extraction.config,AsyncConfig,25,0,0,0,8,0,2,0,2,0
+SUTRA extraction service,com.sutra.extraction.config,AiProperties.Ai,2,25,1,1,0,3,1,1,0,1
+SUTRA extraction service,com.sutra.extraction.config,ExtractionProperties,17,50,7,5,1,8,6,4,1,3
+SUTRA extraction service,com.sutra.extraction.config,AiProperties.Groq,6,29,1,3,1,2,2,3,1,2
+SUTRA extraction service,com.sutra.extraction.config,AiProperties.Files,0,6,0,0,0,1,0,1,0,1
+SUTRA extraction service,com.sutra.extraction.config,AiProperties,0,9,0,0,0,1,0,1,0,1
+SUTRA extraction service,com.sutra.extraction.config,AiProperties.Ocr,8,51,5,5,0,7,5,2,0,2
+SUTRA extraction service,com.sutra.extraction.dto.response,ExtractionJobResponse,74,0,0,0,4,0,2,0,2,0
+SUTRA extraction service,com.sutra.extraction.controller,ExtractionController,30,0,0,0,8,0,5,0,5,0
+SUTRA extraction service,com.sutra.extraction.controller,ExtractionEngineController,16,0,0,0,4,0,2,0,2,0
+SUTRA extraction service,com.sutra.extraction.controller,InternalExtractionController,100,0,6,0,18,0,9,0,6,0
+SUTRA extraction service,com.sutra.extraction.entity,ExtractionJob,12,0,0,0,4,0,1,0,1,0
+SUTRA extraction service,com.sutra.extraction.entity,ExtractionJob.Status,54,0,0,0,1,0,1,0,1,0
+SUTRA extraction service,com.sutra.extraction.exception,QuotationProcessingException,0,13,0,0,0,4,0,2,0,2
+SUTRA extraction service,com.sutra.extraction.exception,InvalidQuotationFileException,0,6,0,0,0,2,0,1,0,1
+SUTRA extraction service,com.sutra.extraction.exception,AiServiceException,0,13,0,0,0,4,0,2,0,2
+SUTRA extraction service,com.sutra.extraction.service.impl,ExtractionServiceImpl.new TransactionSynchronization() {...},24,0,0,0,3,0,3,0,3,0
+SUTRA extraction service,com.sutra.extraction.service.impl,RfqDraftServiceImpl,270,333,45,45,45,66,32,23,2,8
+SUTRA extraction service,com.sutra.extraction.service.impl,ExtractionServiceImpl,504,0,24,0,98,0,32,0,20,0
+SUTRA extraction service,com.sutra.extraction.client,DocumentProcessingClient.ParsedDocument,0,21,0,0,0,1,0,1,0,1
+SUTRA extraction service,com.sutra.extraction.client,AiServiceClient.new ByteArrayResource() {...},0,10,0,0,0,2,0,2,0,2
+SUTRA extraction service,com.sutra.extraction.client,GroqClient,150,469,22,36,29,89,22,25,4,14
+SUTRA extraction service,com.sutra.extraction.client,AiServiceClient.MatchResponse,0,6,0,0,0,1,0,1,0,1
+SUTRA extraction service,com.sutra.extraction.client,DocumentStoreClient,69,0,0,0,9,0,5,0,5,0
+SUTRA extraction service,com.sutra.extraction.client,DocumentProcessingClient.MatchRequestItem,0,18,0,0,0,1,0,1,0,1
+SUTRA extraction service,com.sutra.extraction.client,GroqClient.Completion,0,15,0,0,0,1,0,1,0,1
+SUTRA extraction service,com.sutra.extraction.client,DocumentProcessingClient.MatchScore,0,12,0,0,0,1,0,1,0,1
+SUTRA extraction service,com.sutra.extraction.client,DocumentProcessingClient.MatchQuotedItem,0,15,0,0,0,1,0,1,0,1
+SUTRA extraction service,com.sutra.extraction.client,DocumentStoreClient.new ByteArrayResource() {...},13,0,0,0,2,0,2,0,2,0
+SUTRA extraction service,com.sutra.extraction.client,QuotationClient,71,0,4,0,13,0,7,0,5,0
+SUTRA extraction service,com.sutra.extraction.client,AiServiceClient,31,204,5,7,7,41,5,11,0,10
+SUTRA extraction service,com.sutra,ExtractionServiceApplication,8,0,0,0,3,0,2,0,2,0

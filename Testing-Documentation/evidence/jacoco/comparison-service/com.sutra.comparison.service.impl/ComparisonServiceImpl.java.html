@@ -1,0 +1,209 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>ComparisonServiceImpl.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">SUTRA comparison service</a> &gt; <a href="index.source.html" class="el_package">com.sutra.comparison.service.impl</a> &gt; <span class="el_source">ComparisonServiceImpl.java</span></div><h1>ComparisonServiceImpl.java</h1><pre class="source lang-java linenums">package com.sutra.comparison.service.impl;
+
+import com.sutra.api.comparison.ComparisonResult;
+import com.sutra.api.decision.DecisionResponses.ComparisonReportResponse;
+import com.sutra.api.enums.PurchaseRequestStatus;
+import com.sutra.api.enums.QuotationStatus;
+import com.sutra.api.quotation.QuotationResponses.QuotationResponse;
+import com.sutra.api.rfq.PurchaseRequestResponses.PurchaseRequestResponse;
+import com.sutra.common.audit.AuditService;
+import com.sutra.common.error.BusinessRuleException;
+import com.sutra.common.error.ForbiddenOperationException;
+import com.sutra.common.error.ResourceNotFoundException;
+import com.sutra.common.security.CurrentUserProvider;
+import com.sutra.common.security.RoleName;
+import com.sutra.common.security.SutraUserPrincipal;
+import com.sutra.comparison.client.ProcurementClients;
+import com.sutra.comparison.entity.ComparisonQuotation;
+import com.sutra.comparison.entity.ComparisonReport;
+import com.sutra.comparison.entity.UserRef;
+import com.sutra.comparison.repository.ComparisonReportRepository;
+import com.sutra.comparison.service.ComparisonService;
+import com.sutra.comparison.service.internal.ComparisonEngine;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+import tools.jackson.core.JacksonException;
+import tools.jackson.databind.ObjectMapper;
+
+import java.time.Clock;
+import java.time.Instant;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.Set;
+import java.util.stream.Collectors;
+
+import static com.sutra.common.audit.AuditService.details;
+
+/**
+ * Generates and stores versioned side-by-side comparisons of READY_FOR_COMPARISON quotations. The RFQ and the
+ * quotations are read from their services; the report is saved here, then the RFQ is moved to UNDER_REVIEW in the
+ * same transaction (if the RFQ service refuses, the report is not kept).
+ */
+@Service
+@Transactional
+public class ComparisonServiceImpl implements ComparisonService {
+
+    static final String AUDIT_TYPE = &quot;COMPARISON_REPORT&quot;;
+
+    private final ComparisonReportRepository reportRepository;
+    private final ProcurementClients procurement;
+    private final ComparisonEngine engine;
+    private final CurrentUserProvider currentUser;
+    private final AuditService auditService;
+    private final ObjectMapper objectMapper;
+    private final Clock clock;
+
+<span class="fc" id="L58">    public ComparisonServiceImpl(ComparisonReportRepository reportRepository, ProcurementClients procurement,</span>
+                                 ComparisonEngine engine, CurrentUserProvider currentUser, AuditService auditService,
+                                 ObjectMapper objectMapper, Clock clock) {
+<span class="fc" id="L61">        this.reportRepository = reportRepository;</span>
+<span class="fc" id="L62">        this.procurement = procurement;</span>
+<span class="fc" id="L63">        this.engine = engine;</span>
+<span class="fc" id="L64">        this.currentUser = currentUser;</span>
+<span class="fc" id="L65">        this.auditService = auditService;</span>
+<span class="fc" id="L66">        this.objectMapper = objectMapper;</span>
+<span class="fc" id="L67">        this.clock = clock;</span>
+<span class="fc" id="L68">    }</span>
+
+    @Override
+    public ComparisonReportResponse generate(Long purchaseRequestId) {
+<span class="fc" id="L72">        PurchaseRequestResponse pr = procurement.rfq(purchaseRequestId);</span>
+<span class="fc" id="L73">        requireModify(pr);</span>
+<span class="pc bpc" id="L74" title="1 of 4 branches missed.">        if (pr.status() != PurchaseRequestStatus.OPEN &amp;&amp; pr.status() != PurchaseRequestStatus.UNDER_REVIEW) {</span>
+<span class="nc" id="L75">            throw new BusinessRuleException(&quot;PR_NOT_COMPARABLE&quot;,</span>
+<span class="nc" id="L76">                    &quot;Comparisons can only be generated while the request is OPEN or UNDER_REVIEW&quot;);</span>
+        }
+<span class="fc" id="L78">        List&lt;QuotationResponse&gt; all = procurement.quotations(purchaseRequestId);</span>
+<span class="fc bfc" id="L79" title="All 2 branches covered.">        List&lt;QuotationResponse&gt; ready = all.stream().filter(q -&gt; q.status() == QuotationStatus.READY_FOR_COMPARISON).toList();</span>
+<span class="fc bfc" id="L80" title="All 2 branches covered.">        if (ready.isEmpty()) {</span>
+<span class="fc" id="L81">            throw new BusinessRuleException(&quot;NO_READY_QUOTATIONS&quot;,</span>
+<span class="fc" id="L82">                    &quot;No quotation is ready for comparison yet. Wait until the quotations have been read, and fix any line &quot;</span>
+                            + &quot;without a quantity or price.&quot;);
+        }
+<span class="fc" id="L85">        ComparisonResult computed = engine.compare(pr, ready);</span>
+<span class="fc" id="L86">        List&lt;String&gt; warnings = new ArrayList&lt;&gt;(computed.warnings());</span>
+<span class="fc" id="L87">        long excluded = all.size() - ready.size();</span>
+<span class="fc bfc" id="L88" title="All 2 branches covered.">        if (excluded &gt; 0) {</span>
+<span class="fc" id="L89">            warnings.add(0, excluded + &quot; quotation(s) not ready for comparison were excluded&quot;);</span>
+        }
+<span class="fc bfc" id="L91" title="All 2 branches covered.">        if (ready.size() == 1) {</span>
+<span class="fc" id="L92">            warnings.add(0, &quot;Only one quotation is ready; there is nothing to compare it against yet&quot;);</span>
+        }
+<span class="fc" id="L94">        ComparisonResult result = new ComparisonResult(computed.purchaseRequestId(), computed.requestCurrency(),</span>
+<span class="fc" id="L95">                computed.quotations(), computed.rows(), computed.unmatchedItems(), warnings,</span>
+<span class="fc" id="L96">                computed.lowestCompleteQuotationId(), computed.disclaimer());</span>
+
+<span class="fc" id="L98">        ComparisonReport report = new ComparisonReport();</span>
+<span class="fc" id="L99">        report.setPurchaseRequestId(purchaseRequestId);</span>
+<span class="fc" id="L100">        report.setReportVersion(reportRepository.findMaxVersion(purchaseRequestId) + 1);</span>
+<span class="fc" id="L101">        report.setGeneratedBy(UserRef.of(currentUser.requirePrincipal()));</span>
+<span class="fc" id="L102">        report.setGeneratedAt(Instant.now(clock));</span>
+<span class="fc" id="L103">        report.setDetails(toJson(result));</span>
+<span class="fc" id="L104">        report.setLowestCompleteQuotationId(result.lowestCompleteQuotationId());</span>
+<span class="fc bfc" id="L105" title="All 2 branches covered.">        for (ComparisonResult.QuotationColumn column : result.quotations()) {</span>
+<span class="fc" id="L106">            ComparisonQuotation cq = new ComparisonQuotation();</span>
+<span class="fc" id="L107">            cq.setComparisonReport(report);</span>
+<span class="fc" id="L108">            cq.setQuotationId(column.quotationId());</span>
+<span class="fc" id="L109">            cq.setQuotationVersion(column.quotationVersion());</span>
+<span class="fc" id="L110">            cq.setGrandTotal(column.grandTotal());</span>
+<span class="fc" id="L111">            cq.setItemsQuoted(column.itemsQuoted());</span>
+<span class="fc" id="L112">            cq.setItemsMissing(column.itemsMissing());</span>
+<span class="fc" id="L113">            cq.setPriceRank(column.priceRank());</span>
+<span class="fc" id="L114">            report.getQuotations().add(cq);</span>
+        }
+<span class="fc" id="L116">        report = reportRepository.saveAndFlush(report); // constraints checked before the RFQ is moved</span>
+<span class="fc" id="L117">        Set&lt;Long&gt; compared = ready.stream().map(QuotationResponse::id).collect(Collectors.toSet());</span>
+<span class="fc" id="L118">        auditService.record(AUDIT_TYPE, report.getId(), &quot;GENERATED&quot;, details(&quot;purchaseRequest&quot;, pr.requestNumber(),</span>
+<span class="fc" id="L119">                &quot;version&quot;, report.getReportVersion(), &quot;quotations&quot;, compared,</span>
+<span class="fc" id="L120">                &quot;lowestCompleteQuotationId&quot;, result.lowestCompleteQuotationId()));</span>
+<span class="fc bfc" id="L121" title="All 2 branches covered.">        if (pr.status() == PurchaseRequestStatus.OPEN) {</span>
+<span class="fc" id="L122">            procurement.changeStatus(purchaseRequestId, PurchaseRequestStatus.OPEN, PurchaseRequestStatus.UNDER_REVIEW,</span>
+<span class="fc" id="L123">                    currentUser.username(), details(&quot;comparisonVersion&quot;, report.getReportVersion()));</span>
+        }
+<span class="fc" id="L125">        return toResponse(report, result, true);</span>
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public List&lt;ComparisonReportResponse&gt; list(Long purchaseRequestId) {
+<span class="nc" id="L131">        procurement.rfq(purchaseRequestId); // 404 for an unknown RFQ</span>
+<span class="nc" id="L132">        List&lt;ComparisonReport&gt; reports = reportRepository.findByPurchaseRequestIdOrderByReportVersionDesc(purchaseRequestId);</span>
+<span class="nc" id="L133">        List&lt;ComparisonReportResponse&gt; responses = new ArrayList&lt;&gt;();</span>
+<span class="nc bnc" id="L134" title="All 2 branches missed.">        for (int i = 0; i &lt; reports.size(); i++) {</span>
+<span class="nc bnc" id="L135" title="All 2 branches missed.">            responses.add(toResponse(reports.get(i), fromJson(reports.get(i).getDetails()), i == 0));</span>
+        }
+<span class="nc" id="L137">        return responses;</span>
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public ComparisonReportResponse get(Long reportId) {
+<span class="nc" id="L143">        ComparisonReport report = find(reportId);</span>
+<span class="nc" id="L144">        boolean latest = reportRepository.findFirstByPurchaseRequestIdOrderByReportVersionDesc(report.getPurchaseRequestId())</span>
+<span class="nc" id="L145">                .map(r -&gt; r.getId().equals(reportId)).orElse(false);</span>
+<span class="nc" id="L146">        return toResponse(report, fromJson(report.getDetails()), latest);</span>
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public Optional&lt;ComparisonReportResponse&gt; latest(Long purchaseRequestId) {
+<span class="nc" id="L152">        return reportRepository.findFirstByPurchaseRequestIdOrderByReportVersionDesc(purchaseRequestId)</span>
+<span class="nc" id="L153">                .map(r -&gt; toResponse(r, fromJson(r.getDetails()), true));</span>
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public boolean isStale(Long reportId) {
+<span class="fc" id="L159">        ComparisonReport report = find(reportId);</span>
+<span class="fc" id="L160">        Set&lt;Long&gt; ids = report.getQuotations().stream().map(ComparisonQuotation::getQuotationId).collect(Collectors.toSet());</span>
+<span class="fc" id="L161">        Map&lt;Long, Long&gt; current = procurement.versions(ids);</span>
+<span class="fc" id="L162">        return report.getQuotations().stream()</span>
+<span class="pc bpc" id="L163" title="1 of 2 branches missed.">                .anyMatch(cq -&gt; !cq.getQuotationVersion().equals(current.get(cq.getQuotationId())));</span>
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public long references(Long quotationId) {
+<span class="nc" id="L169">        return reportRepository.countQuotationReferences(quotationId);</span>
+    }
+
+    private ComparisonReport find(Long reportId) {
+<span class="fc" id="L173">        return reportRepository.findById(reportId)</span>
+<span class="pc" id="L174">                .orElseThrow(() -&gt; new ResourceNotFoundException(&quot;Comparison report&quot;, reportId));</span>
+    }
+
+    /** Administrators may compare any RFQ; buyers only the RFQs they raised. */
+    private void requireModify(PurchaseRequestResponse pr) {
+<span class="fc" id="L179">        SutraUserPrincipal principal = currentUser.requirePrincipal();</span>
+<span class="pc bpc" id="L180" title="1 of 2 branches missed.">        boolean allowed = principal.hasRole(RoleName.ADMIN)</span>
+<span class="pc bpc" id="L181" title="1 of 4 branches missed.">                || (principal.hasRole(RoleName.PROCUREMENT) &amp;&amp; pr.requestedById().equals(principal.getId()));</span>
+<span class="fc bfc" id="L182" title="All 2 branches covered.">        if (!allowed) {</span>
+<span class="fc" id="L183">            throw new ForbiddenOperationException(&quot;Only the creator of &quot; + pr.requestNumber()</span>
+                    + &quot; or an administrator can change it or its quotations&quot;);
+        }
+<span class="fc" id="L186">    }</span>
+
+    static ComparisonReportResponse toResponse(ComparisonReport r, ComparisonResult result, boolean latest) {
+<span class="fc" id="L189">        return new ComparisonReportResponse(r.getId(), r.getPurchaseRequestId(), r.getReportVersion(),</span>
+<span class="fc" id="L190">                r.getGeneratedBy().getUsername(), r.getGeneratedAt(), r.getLowestCompleteQuotationId(), latest, result);</span>
+    }
+
+    private ComparisonResult fromJson(String json) {
+        try {
+<span class="nc" id="L195">            return objectMapper.readValue(json, ComparisonResult.class);</span>
+<span class="nc" id="L196">        } catch (JacksonException e) {</span>
+<span class="nc" id="L197">            throw new IllegalStateException(&quot;Stored comparison report could not be read&quot;, e);</span>
+        }
+    }
+
+    private String toJson(ComparisonResult result) {
+        try {
+<span class="fc" id="L203">            return objectMapper.writeValueAsString(result);</span>
+<span class="nc" id="L204">        } catch (JacksonException e) {</span>
+<span class="nc" id="L205">            throw new IllegalStateException(&quot;Comparison could not be serialised&quot;, e);</span>
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.13.202504020838</span></div></body></html>

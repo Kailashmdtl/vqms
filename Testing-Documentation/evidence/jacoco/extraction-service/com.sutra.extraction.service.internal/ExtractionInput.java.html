@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>ExtractionInput.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">SUTRA extraction service</a> &gt; <a href="index.source.html" class="el_package">com.sutra.extraction.service.internal</a> &gt; <span class="el_source">ExtractionInput.java</span></div><h1>ExtractionInput.java</h1><pre class="source lang-java linenums"><span class="fc" id="L1">package com.sutra.extraction.service.internal;</span>
+
+import com.sutra.api.enums.FileFormat;
+import java.math.BigDecimal;
+import java.util.List;
+
+/**
+ * Everything the extractor may use: all files of one quotation (read together), the vendor it was uploaded for,
+ * and the purchase-request lines for context. File bytes must never be logged.
+ */
+public record ExtractionInput(
+        List&lt;Document&gt; documents,
+        String expectedVendorName,
+        String requestCurrency,
+        List&lt;RequestedItem&gt; requestedItems,
+        /** The Groq model to try first, or null for the configured order. */
+        String preferredModel) {
+
+    public ExtractionInput(List&lt;Document&gt; documents, String expectedVendorName, String requestCurrency,
+                           List&lt;RequestedItem&gt; requestedItems) {
+<span class="fc" id="L21">        this(documents, expectedVendorName, requestCurrency, requestedItems, null);</span>
+<span class="fc" id="L22">    }</span>
+
+    public ExtractionInput withPreferredModel(String model) {
+<span class="fc" id="L25">        return new ExtractionInput(documents, expectedVendorName, requestCurrency, requestedItems, model);</span>
+    }
+
+<span class="fc" id="L28">    public ExtractionInput {</span>
+<span class="fc" id="L29">        documents = List.copyOf(documents);</span>
+<span class="pc bpc" id="L30" title="1 of 2 branches missed.">        if (documents.isEmpty()) {</span>
+<span class="nc" id="L31">            throw new IllegalArgumentException(&quot;A quotation needs at least one file&quot;);</span>
+        }
+<span class="fc" id="L33">    }</span>
+
+    /** One original file of the quotation. */
+    public record Document(String fileName, FileFormat format, byte[] content) {
+        @Override
+        public String toString() {
+<span class="nc" id="L39">            return &quot;Document[&quot; + fileName + &quot;, &quot; + format + &quot;, &quot; + content.length + &quot; bytes]&quot;;</span>
+        }
+    }
+
+    /** The purchase-request lines, given as context so the extractor knows what goods are being quoted. */
+    public record RequestedItem(int lineNumber, String itemCode, String description, BigDecimal quantity,
+                                String unitOfMeasure, String specifications) {
+    }
+
+    /** File names joined with &quot;, &quot; - for messages and logs. */
+    public String fileName() {
+<span class="fc" id="L50">        return String.join(&quot;, &quot;, documents.stream().map(Document::fileName).toList());</span>
+    }
+
+    @Override
+    public String toString() {
+<span class="nc" id="L55">        return &quot;ExtractionInput[files=&quot; + documents + &quot;]&quot;;</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.13.202504020838</span></div></body></html>

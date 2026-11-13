@@ -1,0 +1,16 @@
+GROUP,PACKAGE,CLASS,INSTRUCTION_MISSED,INSTRUCTION_COVERED,BRANCH_MISSED,BRANCH_COVERED,LINE_MISSED,LINE_COVERED,COMPLEXITY_MISSED,COMPLEXITY_COVERED,METHOD_MISSED,METHOD_COVERED
+SUTRA comparison service,com.sutra.comparison.controller,ComparisonController,21,0,0,0,6,0,4,0,4,0
+SUTRA comparison service,com.sutra.comparison.controller,InternalComparisonController,37,0,0,0,8,0,6,0,6,0
+SUTRA comparison service,com.sutra.comparison.entity,ComparisonQuotation,0,17,0,0,0,5,0,3,0,3
+SUTRA comparison service,com.sutra.comparison.entity,UserRef,29,24,4,0,6,6,7,3,5,3
+SUTRA comparison service,com.sutra.comparison.entity,ComparisonReport,0,11,0,0,0,3,0,1,0,1
+SUTRA comparison service,com.sutra.comparison.entity.base,BaseEntity,0,3,0,0,0,1,0,1,0,1
+SUTRA comparison service,com.sutra.comparison.config,ComparisonAuditScope,27,0,4,0,6,0,5,0,3,0
+SUTRA comparison service,com.sutra.comparison.client,ProcurementClients.new ParameterizedTypeReference() {...},6,0,0,0,1,0,1,0,1,0
+SUTRA comparison service,com.sutra.comparison.client,ProcurementClients.new ParameterizedTypeReference() {...},6,0,0,0,1,0,1,0,1,0
+SUTRA comparison service,com.sutra.comparison.client,ProcurementClients,132,0,0,0,13,0,10,0,10,0
+SUTRA comparison service,com.sutra,ComparisonServiceApplication,8,0,0,0,3,0,2,0,2,0
+SUTRA comparison service,com.sutra.comparison.service.impl,ComparisonServiceImpl,132,397,8,22,20,69,14,18,8,9
+SUTRA comparison service,com.sutra.comparison.service.internal,VendorGrader,23,414,9,51,1,69,9,32,0,11
+SUTRA comparison service,com.sutra.comparison.service.internal,ComparisonEngine,77,792,34,82,14,112,33,42,0,17
+SUTRA comparison service,com.sutra.comparison.service.internal,ComparisonEngine.CellDraft,0,15,0,0,0,1,0,1,0,1

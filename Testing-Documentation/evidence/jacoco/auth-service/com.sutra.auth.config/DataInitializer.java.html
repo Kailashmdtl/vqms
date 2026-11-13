@@ -1,0 +1,65 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>DataInitializer.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">SUTRA auth service</a> &gt; <a href="index.source.html" class="el_package">com.sutra.auth.config</a> &gt; <span class="el_source">DataInitializer.java</span></div><h1>DataInitializer.java</h1><pre class="source lang-java linenums">package com.sutra.auth.config;
+
+import com.sutra.auth.entity.AppUser;
+import com.sutra.auth.entity.Role;
+import com.sutra.common.security.RoleName;
+import com.sutra.auth.repository.AppUserRepository;
+import com.sutra.auth.repository.RoleRepository;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.boot.ApplicationArguments;
+import org.springframework.boot.ApplicationRunner;
+import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.stereotype.Component;
+import org.springframework.transaction.annotation.Transactional;
+
+/**
+ * Creates the first administrator when the user table is empty. While that administrator still uses the start-up
+ * password (from SUTRA_ADMIN_PASSWORD, &quot;Admin@123&quot; by default), it must choose a new one at its next sign-in.
+ */
+@Component
+public class DataInitializer implements ApplicationRunner {
+
+<span class="fc" id="L23">    private static final Logger log = LoggerFactory.getLogger(DataInitializer.class);</span>
+
+    private final AppUserRepository userRepository;
+    private final RoleRepository roleRepository;
+    private final PasswordEncoder passwordEncoder;
+    private final AuthProperties properties;
+
+<span class="fc" id="L30">    public DataInitializer(AppUserRepository userRepository, RoleRepository roleRepository,</span>
+                           PasswordEncoder passwordEncoder, AuthProperties properties) {
+<span class="fc" id="L32">        this.userRepository = userRepository;</span>
+<span class="fc" id="L33">        this.roleRepository = roleRepository;</span>
+<span class="fc" id="L34">        this.passwordEncoder = passwordEncoder;</span>
+<span class="fc" id="L35">        this.properties = properties;</span>
+<span class="fc" id="L36">    }</span>
+
+    @Override
+    @Transactional
+    public void run(ApplicationArguments args) {
+<span class="fc" id="L41">        var cfg = properties.bootstrapAdmin();</span>
+<span class="fc bfc" id="L42" title="All 2 branches covered.">        if (userRepository.count() &gt; 0) {</span>
+<span class="fc" id="L43">            userRepository.findByUsernameIgnoreCase(cfg.username())</span>
+<span class="pc bpc" id="L44" title="1 of 4 branches missed.">                    .filter(u -&gt; !u.isPasswordChangeRequired() &amp;&amp; passwordEncoder.matches(cfg.password(), u.getPasswordHash()))</span>
+<span class="fc" id="L45">                    .ifPresent(u -&gt; {</span>
+<span class="fc" id="L46">                        u.setPasswordChangeRequired(true);</span>
+<span class="fc" id="L47">                        log.warn(&quot;Administrator '{}' still uses the start-up password; it must be changed at sign-in.&quot;,</span>
+<span class="fc" id="L48">                                u.getUsername());</span>
+<span class="fc" id="L49">                    });</span>
+<span class="fc" id="L50">            return;</span>
+        }
+<span class="fc" id="L52">        Role admin = roleRepository.findByName(RoleName.ADMIN)</span>
+<span class="pc" id="L53">                .orElseThrow(() -&gt; new IllegalStateException(&quot;ADMIN role missing - did the migrations run?&quot;));</span>
+<span class="fc" id="L54">        AppUser user = new AppUser();</span>
+<span class="fc" id="L55">        user.setUsername(cfg.username());</span>
+<span class="fc" id="L56">        user.setEmail(cfg.email());</span>
+<span class="fc" id="L57">        user.setFullName(&quot;System Administrator&quot;);</span>
+<span class="fc" id="L58">        user.setPasswordHash(passwordEncoder.encode(cfg.password()));</span>
+<span class="fc" id="L59">        user.getRoles().add(admin);</span>
+<span class="fc" id="L60">        user.setPasswordChangeRequired(true);</span>
+<span class="fc" id="L61">        userRepository.save(user);</span>
+<span class="fc" id="L62">        log.info(&quot;Created bootstrap administrator '{}'. Change its password after first login.&quot;, cfg.username());</span>
+<span class="fc" id="L63">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.13.202504020838</span></div></body></html>

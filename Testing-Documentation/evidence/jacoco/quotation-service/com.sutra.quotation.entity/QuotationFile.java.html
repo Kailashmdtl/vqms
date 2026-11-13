@@ -1,0 +1,67 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>QuotationFile.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">SUTRA quotation service</a> &gt; <a href="index.source.html" class="el_package">com.sutra.quotation.entity</a> &gt; <span class="el_source">QuotationFile.java</span></div><h1>QuotationFile.java</h1><pre class="source lang-java linenums">package com.sutra.quotation.entity;
+
+import com.sutra.quotation.entity.base.BaseEntity;
+import com.sutra.api.enums.FileFormat;
+import jakarta.persistence.Column;
+import jakarta.persistence.Embedded;
+import jakarta.persistence.AttributeOverride;
+import jakarta.persistence.Entity;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
+import jakarta.persistence.FetchType;
+import jakarta.persistence.JoinColumn;
+import jakarta.persistence.ManyToOne;
+import jakarta.persistence.Table;
+import java.time.Instant;
+import lombok.Getter;
+import lombok.Setter;
+
+/**
+ * One original file of a quotation. The bytes are kept by the document service ({@link #documentId}); this row
+ * keeps what lists, duplicate checks and downloads need. A quotation can have several files (e.g. the same offer
+ * as PDF, Word and Excel), which are read together.
+ */
+@Entity
+@Table(name = &quot;quotation_file&quot;)
+@Getter
+@Setter
+<span class="fc" id="L28">public class QuotationFile extends BaseEntity {</span>
+
+    @ManyToOne(fetch = FetchType.LAZY, optional = false)
+    @JoinColumn(name = &quot;quotation_id&quot;, nullable = false)
+    private Quotation quotation;
+
+    @Column(name = &quot;file_name&quot;, nullable = false)
+    private String fileName;
+
+    @Column(name = &quot;content_type&quot;, nullable = false, length = 150)
+    private String contentType;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = &quot;file_format&quot;, nullable = false, length = 10)
+    private FileFormat fileFormat;
+
+    @Column(name = &quot;size_bytes&quot;, nullable = false)
+    private long sizeBytes;
+
+    @Column(nullable = false, length = 64)
+    private String sha256;
+
+    /** The stored file in the document service (a cross-schema foreign key keeps it valid). */
+    @Column(name = &quot;document_id&quot;, nullable = false)
+    private Long documentId;
+
+    @Embedded
+    @AttributeOverride(name = &quot;id&quot;, column = @Column(name = &quot;uploaded_by_id&quot;, nullable = false))
+    @AttributeOverride(name = &quot;username&quot;, column = @Column(name = &quot;uploaded_by_name&quot;, nullable = false))
+    private UserRef uploadedBy;
+
+    @Column(name = &quot;uploaded_at&quot;, nullable = false)
+<span class="fc" id="L60">    private Instant uploadedAt = Instant.now();</span>
+
+    @Override
+    public String toString() {
+<span class="nc" id="L64">        return &quot;QuotationFile[id=&quot; + getId() + &quot;, name=&quot; + fileName + &quot;, size=&quot; + sizeBytes + &quot;]&quot;;</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.13.202504020838</span></div></body></html>

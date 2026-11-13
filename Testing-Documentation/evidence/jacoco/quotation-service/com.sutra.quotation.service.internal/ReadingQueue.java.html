@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>ReadingQueue.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">SUTRA quotation service</a> &gt; <a href="index.source.html" class="el_package">com.sutra.quotation.service.internal</a> &gt; <span class="el_source">ReadingQueue.java</span></div><h1>ReadingQueue.java</h1><pre class="source lang-java linenums">package com.sutra.quotation.service.internal;
+
+import com.sutra.api.enums.QuotationStatus;
+import com.sutra.api.extraction.ExtractionChoice;
+import com.sutra.common.audit.AuditService;
+import com.sutra.common.security.CurrentUserProvider;
+import com.sutra.quotation.client.DecisionClient;
+import com.sutra.quotation.repository.QuotationRepository;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Component;
+import org.springframework.transaction.support.TransactionTemplate;
+
+import static com.sutra.common.audit.AuditService.details;
+
+/**
+ * Asks the extraction service to read a quotation once the upload (or retry) has committed. If the extraction
+ * service cannot take it, the quotation becomes FAILED with the reason, keeps its files, and can be read again.
+ */
+@Component
+public class ReadingQueue {
+
+<span class="fc" id="L23">    private static final Logger log = LoggerFactory.getLogger(ReadingQueue.class);</span>
+
+    private final DecisionClient decisions;
+    private final QuotationRepository quotations;
+    private final AuditService auditService;
+    private final TransactionTemplate tx;
+
+<span class="fc" id="L30">    public ReadingQueue(DecisionClient decisions, QuotationRepository quotations, AuditService auditService,</span>
+                        TransactionTemplate tx) {
+<span class="fc" id="L32">        this.decisions = decisions;</span>
+<span class="fc" id="L33">        this.quotations = quotations;</span>
+<span class="fc" id="L34">        this.auditService = auditService;</span>
+<span class="fc" id="L35">        this.tx = tx;</span>
+<span class="fc" id="L36">    }</span>
+
+    public void queue(Long quotationId, ExtractionChoice choice) {
+<span class="fc" id="L39">        AfterCommit.run(() -&gt; {</span>
+            try {
+<span class="fc" id="L41">                decisions.read(quotationId, choice);</span>
+<span class="pc" id="L42">            } catch (RuntimeException e) {</span>
+<span class="nc" id="L43">                log.warn(&quot;Reading of quotation {} could not be queued: {}&quot;, quotationId, e.getMessage());</span>
+<span class="nc" id="L44">                fail(quotationId, &quot;The quotation could not be sent for reading (&quot; + e.getMessage()</span>
+                        + &quot;). Read it again, or enter it manually.&quot;);
+            }
+<span class="fc" id="L47">        });</span>
+<span class="fc" id="L48">    }</span>
+
+    private void fail(Long quotationId, String reason) {
+<span class="nc" id="L51">        tx.executeWithoutResult(status -&gt; quotations.findById(quotationId).ifPresent(q -&gt; {</span>
+<span class="nc" id="L52">            q.setStatus(QuotationStatus.FAILED);</span>
+<span class="nc bnc" id="L53" title="All 2 branches missed.">            q.setFailureReason(reason.length() &gt; 1000 ? reason.substring(0, 1000) : reason);</span>
+<span class="nc" id="L54">            auditService.recordAs(CurrentUserProvider.SYSTEM_USER, &quot;QUOTATION&quot;, quotationId, &quot;EXTRACTION_FAILED&quot;,</span>
+<span class="nc" id="L55">                    details(&quot;reason&quot;, q.getFailureReason()));</span>
+<span class="nc" id="L56">        }));</span>
+<span class="nc" id="L57">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.13.202504020838</span></div></body></html>

@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>AuthRequests.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">SUTRA auth service</a> &gt; <a href="index.source.html" class="el_package">com.sutra.auth.dto.request</a> &gt; <span class="el_source">AuthRequests.java</span></div><h1>AuthRequests.java</h1><pre class="source lang-java linenums"><span class="fc" id="L1">package com.sutra.auth.dto.request;</span>
+
+import jakarta.validation.constraints.Email;
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Pattern;
+import jakarta.validation.constraints.Size;
+
+/** Authentication and password payloads. */
+public final class AuthRequests {
+
+    private AuthRequests() {
+    }
+
+    public record LoginRequest(
+            @NotBlank String username,
+            @NotBlank String password) {
+    }
+
+    /** A supplier signing up on the vendor portal: its company details and the login it wants. */
+    public record VendorSignupRequest(
+            @NotBlank @Size(max = 200) String companyName,
+            @NotBlank @Size(max = 150) String contactPerson,
+            @NotBlank @Email @Size(max = 255) String email,
+            @Pattern(regexp = &quot;^[0-9+()\\-\\s]{0,40}$&quot;, message = &quot;invalid phone number&quot;) String phone,
+            @Size(max = 50) String taxNumber,
+            @Size(max = 1000) String address,
+            @Size(max = 255) String website,
+            @NotBlank @Pattern(regexp = &quot;^[A-Za-z0-9._-]{3,60}$&quot;, message = &quot;3-60 letters, digits, dot, dash or underscore&quot;)
+            String username,
+            @NotBlank @Size(min = 8, max = 100)
+            @Pattern(regexp = &quot;^(?=.*[A-Za-z])(?=.*\\d).+$&quot;, message = &quot;must contain at least one letter and one digit&quot;)
+            String password) {
+    }
+
+    public record ChangePasswordRequest(
+            @NotBlank String currentPassword,
+            @NotBlank @Size(min = 8, max = 100)
+            @Pattern(regexp = &quot;^(?=.*[A-Za-z])(?=.*\\d).+$&quot;, message = &quot;must contain at least one letter and one digit&quot;)
+            String newPassword) {
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.13.202504020838</span></div></body></html>

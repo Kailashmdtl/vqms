@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>Approval.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">SUTRA approval service</a> &gt; <a href="index.source.html" class="el_package">com.sutra.approval.entity</a> &gt; <span class="el_source">Approval.java</span></div><h1>Approval.java</h1><pre class="source lang-java linenums">package com.sutra.approval.entity;
+
+import com.sutra.approval.entity.base.BaseEntity;
+import com.sutra.api.enums.ApprovalDecision;
+import jakarta.persistence.Column;
+import jakarta.persistence.Embedded;
+import jakarta.persistence.AttributeOverride;
+import jakarta.persistence.Entity;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
+import jakarta.persistence.Table;
+import java.time.Instant;
+import lombok.Getter;
+import lombok.Setter;
+
+/** A human approval or rejection decision. Only ever created by an authorised user - never by AI. */
+@Entity
+@Table(name = &quot;approval&quot;)
+@Getter
+@Setter
+<span class="fc" id="L21">public class Approval extends BaseEntity {</span>
+
+    /** The RFQ decided on (owned by the RFQ service; a cross-schema foreign key keeps it valid). */
+    @Column(name = &quot;purchase_request_id&quot;, nullable = false, updatable = false)
+    private Long purchaseRequestId;
+
+    /** The comparison the decision was made on, and its version (kept: a decision never changes). */
+    @Column(name = &quot;comparison_report_id&quot;, nullable = false, updatable = false)
+    private Long comparisonReportId;
+
+    @Column(name = &quot;comparison_report_version&quot;, nullable = false, updatable = false)
+    private Integer comparisonReportVersion;
+
+    /** The awarded quotation and its vendor's name at the time (null when rejected). */
+    @Column(name = &quot;selected_quotation_id&quot;, updatable = false)
+    private Long selectedQuotationId;
+
+    @Column(name = &quot;selected_vendor_name&quot;, length = 200, updatable = false)
+    private String selectedVendorName;
+
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false, length = 10)
+    private ApprovalDecision decision;
+
+    @Column(columnDefinition = &quot;text&quot;)
+    private String reason;
+
+    @Embedded
+    @AttributeOverride(name = &quot;id&quot;, column = @Column(name = &quot;decided_by_id&quot;, nullable = false))
+    @AttributeOverride(name = &quot;username&quot;, column = @Column(name = &quot;decided_by_name&quot;, nullable = false))
+    private UserRef decidedBy;
+
+    @Column(name = &quot;decided_at&quot;, nullable = false)
+<span class="fc" id="L54">    private Instant decidedAt = Instant.now();</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.13.202504020838</span></div></body></html>

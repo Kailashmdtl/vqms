@@ -1,0 +1,377 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>PurchaseRequestServiceImpl.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">SUTRA rfq service</a> &gt; <a href="index.source.html" class="el_package">com.sutra.rfq.service.impl</a> &gt; <span class="el_source">PurchaseRequestServiceImpl.java</span></div><h1>PurchaseRequestServiceImpl.java</h1><pre class="source lang-java linenums">package com.sutra.rfq.service.impl;
+
+import java.util.Collection;
+import com.sutra.rfq.service.PurchaseRequestService;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
+import org.springframework.transaction.support.TransactionSynchronization;
+import com.sutra.api.internal.InternalContracts.StatusChange;
+import com.sutra.rfq.client.QuotationClient;
+import com.sutra.rfq.mapper.PurchaseRequestMapper;
+import com.sutra.common.audit.AuditService;
+
+import static com.sutra.common.audit.AuditService.details;
+
+import com.sutra.rfq.client.MasterDataClient;
+import com.sutra.rfq.entity.NamedRef;
+import com.sutra.rfq.entity.UserRef;
+import com.sutra.rfq.entity.PurchaseRequest;
+import com.sutra.rfq.entity.RequestItem;
+import com.sutra.api.enums.PurchaseRequestStatus;
+import com.sutra.common.error.BusinessRuleException;
+import com.sutra.rfq.exception.PurchaseRequestNotFoundException;
+import com.sutra.common.error.ResourceNotFoundException;
+import com.sutra.rfq.repository.PurchaseRequestRepository;
+import com.sutra.api.rfq.PurchaseRequestRequests.NewRfqRequest;
+import com.sutra.api.rfq.PurchaseRequestRequests.PurchaseRequestRequest;
+import com.sutra.api.rfq.PurchaseRequestRequests.RequestItemRequest;
+import com.sutra.common.web.PageResponse;
+import com.sutra.api.rfq.PurchaseRequestResponses.PurchaseRequestResponse;
+import com.sutra.api.rfq.PurchaseRequestResponses.PurchaseRequestSummary;
+import com.sutra.common.security.CurrentUserProvider;
+import com.sutra.rfq.service.internal.RecordAccessPolicy;
+import com.sutra.common.util.Text;
+import java.time.Clock;
+import java.time.Year;
+import java.util.EnumSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Sort;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+/**
+ * Purchase requests and their items.
+ *
+ * &lt;p&gt;Status flow: DRAFT -&gt; OPEN (needs at least one item) -&gt; UNDER_REVIEW (set when a comparison is generated) -&gt;
+ * APPROVED / REJECTED (only through an approval decision). DRAFT, OPEN and UNDER_REVIEW can be CANCELLED.&lt;/p&gt;
+ */
+@Service
+@Transactional
+public class PurchaseRequestServiceImpl implements PurchaseRequestService {
+
+    public static final String AUDIT_TYPE = &quot;PURCHASE_REQUEST&quot;;
+
+    /** Transitions a user may request directly. Others happen through comparisons and approvals. */
+<span class="fc" id="L57">    private static final Map&lt;PurchaseRequestStatus, Set&lt;PurchaseRequestStatus&gt;&gt; MANUAL_TRANSITIONS = Map.of(</span>
+<span class="fc" id="L58">            PurchaseRequestStatus.DRAFT, EnumSet.of(PurchaseRequestStatus.OPEN, PurchaseRequestStatus.CANCELLED),</span>
+<span class="fc" id="L59">            PurchaseRequestStatus.OPEN, EnumSet.of(PurchaseRequestStatus.DRAFT, PurchaseRequestStatus.CANCELLED),</span>
+<span class="fc" id="L60">            PurchaseRequestStatus.UNDER_REVIEW, EnumSet.of(PurchaseRequestStatus.OPEN, PurchaseRequestStatus.CANCELLED));</span>
+
+<span class="fc" id="L62">    private static final Set&lt;PurchaseRequestStatus&gt; ITEM_EDITABLE =</span>
+<span class="fc" id="L63">            EnumSet.of(PurchaseRequestStatus.DRAFT, PurchaseRequestStatus.OPEN);</span>
+
+    private final PurchaseRequestRepository repository;
+    private final MasterDataClient masterData;
+    private final QuotationClient quotations;
+    private final CurrentUserProvider currentUser;
+    private final RecordAccessPolicy accessPolicy;
+    private final AuditService auditService;
+    private final Clock clock;
+
+<span class="fc" id="L73">    public PurchaseRequestServiceImpl(PurchaseRequestRepository repository, MasterDataClient masterData,</span>
+                                      QuotationClient quotations, CurrentUserProvider currentUser,
+                                  RecordAccessPolicy accessPolicy, AuditService auditService, Clock clock) {
+<span class="fc" id="L76">        this.repository = repository;</span>
+<span class="fc" id="L77">        this.masterData = masterData;</span>
+<span class="fc" id="L78">        this.quotations = quotations;</span>
+<span class="fc" id="L79">        this.currentUser = currentUser;</span>
+<span class="fc" id="L80">        this.accessPolicy = accessPolicy;</span>
+<span class="fc" id="L81">        this.auditService = auditService;</span>
+<span class="fc" id="L82">        this.clock = clock;</span>
+<span class="fc" id="L83">    }</span>
+
+    @Transactional(readOnly = true)
+    public PageResponse&lt;PurchaseRequestSummary&gt; search(String q, PurchaseRequestStatus status, int page, int size) {
+<span class="nc" id="L87">        var pageable = PageRequest.of(page, Math.min(size, 200), Sort.by(Sort.Direction.DESC, PurchaseRequest::getCreatedAt, PurchaseRequest::getId));</span>
+<span class="nc" id="L88">        return PageResponse.of(repository.search(Text.blankToNull(q), status, pageable), PurchaseRequestMapper::purchaseRequestSummary);</span>
+    }
+
+    @Transactional(readOnly = true)
+    public PurchaseRequestResponse get(Long id) {
+<span class="fc" id="L93">        return PurchaseRequestMapper.purchaseRequestResponse(find(id));</span>
+    }
+
+    public PurchaseRequestResponse create(PurchaseRequestRequest request) {
+<span class="fc" id="L97">        PurchaseRequest pr = new PurchaseRequest();</span>
+<span class="fc" id="L98">        pr.setRequestNumber(String.format(&quot;PR-%d-%05d&quot;, Year.now(clock).getValue(), repository.nextRequestNumber()));</span>
+<span class="fc" id="L99">        pr.setRequestedBy(UserRef.of(currentUser.requirePrincipal()));</span>
+<span class="fc" id="L100">        apply(pr, request);</span>
+<span class="fc" id="L101">        pr = repository.save(pr);</span>
+<span class="fc" id="L102">        auditService.record(AUDIT_TYPE, pr.getId(), &quot;CREATED&quot;, details(&quot;requestNumber&quot;, pr.getRequestNumber(),</span>
+<span class="fc" id="L103">                &quot;title&quot;, pr.getTitle()));</span>
+<span class="fc" id="L104">        return PurchaseRequestMapper.purchaseRequestResponse(pr);</span>
+    }
+
+    /** Header, items and (optionally) opening to vendors in one transaction: all of it is saved, or none. */
+    public PurchaseRequestResponse createWithItems(NewRfqRequest request) {
+<span class="fc" id="L109">        PurchaseRequestResponse result = create(request.request());</span>
+<span class="fc" id="L110">        Long id = result.id();</span>
+<span class="pc bpc" id="L111" title="1 of 4 branches missed.">        for (RequestItemRequest item : request.items() == null ? List.&lt;RequestItemRequest&gt;of() : request.items()) {</span>
+<span class="fc" id="L112">            result = addItem(id, item);</span>
+        }
+<span class="fc bfc" id="L114" title="All 2 branches covered.">        if (request.open()) {</span>
+<span class="fc" id="L115">            result = changeStatus(id, PurchaseRequestStatus.OPEN);</span>
+        }
+<span class="fc" id="L117">        return result;</span>
+    }
+
+    public PurchaseRequestResponse update(Long id, PurchaseRequestRequest request) {
+<span class="nc" id="L121">        PurchaseRequest pr = findModifiable(id);</span>
+<span class="nc bnc" id="L122" title="All 4 branches missed.">        boolean currencyChanged = request.currency() != null &amp;&amp; !request.currency().equals(pr.getCurrency());</span>
+<span class="nc" id="L123">        apply(pr, request);</span>
+<span class="nc bnc" id="L124" title="All 2 branches missed.">        if (currencyChanged) {</span>
+<span class="nc" id="L125">            revalidateQuotations(pr);</span>
+        }
+<span class="nc" id="L127">        auditService.record(AUDIT_TYPE, id, &quot;UPDATED&quot;, details(&quot;title&quot;, pr.getTitle(), &quot;currency&quot;, pr.getCurrency()));</span>
+<span class="nc" id="L128">        return PurchaseRequestMapper.purchaseRequestResponse(pr);</span>
+    }
+
+    public void delete(Long id) {
+<span class="nc" id="L132">        PurchaseRequest pr = find(id);</span>
+<span class="nc" id="L133">        accessPolicy.requireModify(pr);</span>
+<span class="nc bnc" id="L134" title="All 2 branches missed.">        if (pr.getStatus() != PurchaseRequestStatus.DRAFT) {</span>
+<span class="nc" id="L135">            throw new BusinessRuleException(&quot;PR_NOT_DRAFT&quot;, &quot;Only draft requests can be deleted; cancel it instead&quot;);</span>
+        }
+<span class="nc bnc" id="L137" title="All 2 branches missed.">        if (quotations.usage(id).quotations() &gt; 0) {</span>
+<span class="nc" id="L138">            throw new BusinessRuleException(&quot;PR_HAS_QUOTATIONS&quot;, &quot;Delete the request's quotations first&quot;);</span>
+        }
+<span class="nc" id="L140">        repository.delete(pr);</span>
+<span class="nc" id="L141">        auditService.record(AUDIT_TYPE, id, &quot;DELETED&quot;, details(&quot;requestNumber&quot;, pr.getRequestNumber()));</span>
+<span class="nc" id="L142">    }</span>
+
+    public PurchaseRequestResponse changeStatus(Long id, PurchaseRequestStatus target) {
+<span class="fc" id="L145">        PurchaseRequest pr = find(id);</span>
+<span class="fc" id="L146">        accessPolicy.requireModify(pr);</span>
+<span class="fc" id="L147">        PurchaseRequestStatus from = pr.getStatus();</span>
+<span class="fc bfc" id="L148" title="All 2 branches covered.">        if (!MANUAL_TRANSITIONS.getOrDefault(from, Set.of()).contains(target)) {</span>
+<span class="fc" id="L149">            throw new BusinessRuleException(&quot;INVALID_STATUS_TRANSITION&quot;, &quot;Cannot change a request from &quot; + from</span>
+<span class="pc bpc" id="L150" title="3 of 4 branches missed.">                    + &quot; to &quot; + target + (target == PurchaseRequestStatus.APPROVED || target == PurchaseRequestStatus.REJECTED</span>
+<span class="pc" id="L151">                    ? &quot;; record an approval decision instead&quot; : &quot;&quot;));</span>
+        }
+<span class="fc bfc" id="L153" title="All 4 branches covered.">        if (target == PurchaseRequestStatus.OPEN &amp;&amp; pr.getItems().isEmpty()) {</span>
+<span class="fc" id="L154">            throw new BusinessRuleException(&quot;PR_HAS_NO_ITEMS&quot;, &quot;Add at least one item before opening the request&quot;);</span>
+        }
+<span class="pc bpc" id="L156" title="1 of 4 branches missed.">        if (target == PurchaseRequestStatus.DRAFT &amp;&amp; quotations.usage(id).quotations() &gt; 0) {</span>
+<span class="fc" id="L157">            throw new BusinessRuleException(&quot;PR_HAS_QUOTATIONS&quot;, &quot;A request with quotations cannot go back to draft&quot;);</span>
+        }
+<span class="fc" id="L159">        pr.setStatus(target);</span>
+<span class="fc" id="L160">        auditService.record(AUDIT_TYPE, id, &quot;STATUS_CHANGED&quot;, details(&quot;from&quot;, from, &quot;to&quot;, target));</span>
+<span class="fc" id="L161">        return PurchaseRequestMapper.purchaseRequestResponse(pr);</span>
+    }
+
+    // ---------- items ----------
+
+    public PurchaseRequestResponse addItem(Long id, RequestItemRequest request) {
+<span class="fc" id="L167">        PurchaseRequest pr = findItemEditable(id);</span>
+<span class="fc" id="L168">        RequestItem item = new RequestItem();</span>
+<span class="fc" id="L169">        item.setLineNumber(pr.nextLineNumber());</span>
+<span class="fc" id="L170">        applyItem(item, request);</span>
+<span class="fc" id="L171">        pr.addItem(item);</span>
+<span class="fc" id="L172">        repository.flush();</span>
+<span class="fc" id="L173">        revalidateQuotations(pr);</span>
+<span class="fc" id="L174">        auditService.record(AUDIT_TYPE, id, &quot;ITEM_ADDED&quot;, details(&quot;line&quot;, item.getLineNumber(),</span>
+<span class="fc" id="L175">                &quot;description&quot;, item.getDescription(), &quot;quantity&quot;, item.getQuantity()));</span>
+<span class="fc" id="L176">        return PurchaseRequestMapper.purchaseRequestResponse(pr);</span>
+    }
+
+    public PurchaseRequestResponse updateItem(Long id, Long itemId, RequestItemRequest request) {
+<span class="nc" id="L180">        PurchaseRequest pr = findItemEditable(id);</span>
+<span class="nc" id="L181">        RequestItem item = findItem(pr, itemId);</span>
+<span class="nc" id="L182">        applyItem(item, request);</span>
+<span class="nc" id="L183">        revalidateQuotations(pr);</span>
+<span class="nc" id="L184">        auditService.record(AUDIT_TYPE, id, &quot;ITEM_UPDATED&quot;, details(&quot;line&quot;, item.getLineNumber(),</span>
+<span class="nc" id="L185">                &quot;description&quot;, item.getDescription(), &quot;quantity&quot;, item.getQuantity()));</span>
+<span class="nc" id="L186">        return PurchaseRequestMapper.purchaseRequestResponse(pr);</span>
+    }
+
+    public PurchaseRequestResponse deleteItem(Long id, Long itemId) {
+<span class="fc" id="L190">        PurchaseRequest pr = findItemEditable(id);</span>
+<span class="fc" id="L191">        RequestItem item = findItem(pr, itemId);</span>
+<span class="fc" id="L192">        boolean quoted = quotations.usage(id).matchedRequestItemIds().contains(itemId);</span>
+<span class="pc bpc" id="L193" title="1 of 2 branches missed.">        if (quoted) {</span>
+<span class="fc" id="L194">            throw new BusinessRuleException(&quot;REQUEST_ITEM_QUOTED&quot;,</span>
+<span class="fc" id="L195">                    &quot;Line &quot; + item.getLineNumber() + &quot; is matched to quotation lines; unmatch them first&quot;);</span>
+        }
+<span class="nc" id="L197">        pr.getItems().remove(item);</span>
+<span class="nc" id="L198">        repository.flush();</span>
+<span class="nc" id="L199">        revalidateQuotations(pr);</span>
+<span class="nc" id="L200">        auditService.record(AUDIT_TYPE, id, &quot;ITEM_DELETED&quot;, details(&quot;line&quot;, item.getLineNumber(),</span>
+<span class="nc" id="L201">                &quot;description&quot;, item.getDescription()));</span>
+<span class="nc" id="L202">        return PurchaseRequestMapper.purchaseRequestResponse(pr);</span>
+    }
+
+    // ---------- helpers ----------
+
+    public PurchaseRequest find(Long id) {
+<span class="fc" id="L208">        return repository.findById(id).orElseThrow(() -&gt; new PurchaseRequestNotFoundException(id));</span>
+    }
+
+    /** Loads a request the current user may change and that is not closed. */
+    public PurchaseRequest findModifiable(Long id) {
+<span class="fc" id="L213">        PurchaseRequest pr = find(id);</span>
+<span class="fc" id="L214">        accessPolicy.requireModify(pr);</span>
+<span class="fc bfc" id="L215" title="All 2 branches covered.">        if (!pr.isEditable()) {</span>
+<span class="fc" id="L216">            throw new BusinessRuleException(&quot;PR_CLOSED&quot;, pr.getRequestNumber() + &quot; is &quot; + pr.getStatus()</span>
+                    + &quot; and can no longer be changed&quot;);
+        }
+<span class="fc" id="L219">        return pr;</span>
+    }
+
+    private PurchaseRequest findItemEditable(Long id) {
+<span class="fc" id="L223">        PurchaseRequest pr = findModifiable(id);</span>
+<span class="pc bpc" id="L224" title="1 of 2 branches missed.">        if (!ITEM_EDITABLE.contains(pr.getStatus())) {</span>
+<span class="nc" id="L225">            throw new BusinessRuleException(&quot;PR_ITEMS_LOCKED&quot;,</span>
+<span class="nc" id="L226">                    &quot;Items cannot change while the request is &quot; + pr.getStatus() + &quot;; reopen it first&quot;);</span>
+        }
+<span class="fc" id="L228">        return pr;</span>
+    }
+
+    private static RequestItem findItem(PurchaseRequest pr, Long itemId) {
+<span class="fc" id="L232">        return pr.getItems().stream().filter(i -&gt; i.getId().equals(itemId)).findFirst()</span>
+<span class="pc" id="L233">                .orElseThrow(() -&gt; new ResourceNotFoundException(&quot;Request item&quot;, itemId));</span>
+    }
+
+    /**
+     * The RFQ's quotations are re-checked against the changed RFQ once this change has committed (the quotation
+     * service reads the RFQ back, so it must see the new data).
+     */
+    private void revalidateQuotations(PurchaseRequest pr) {
+<span class="fc" id="L241">        Long id = pr.getId();</span>
+<span class="fc bfc" id="L242" title="All 2 branches covered.">        if (TransactionSynchronizationManager.isSynchronizationActive()) {</span>
+<span class="fc" id="L243">            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {</span>
+                @Override
+                public void afterCommit() {
+<span class="fc" id="L246">                    quotations.revalidate(id);</span>
+<span class="fc" id="L247">                }</span>
+            });
+<span class="fc" id="L249">        } else {</span>
+<span class="fc" id="L250">            quotations.revalidate(id);</span>
+        }
+<span class="fc" id="L252">    }</span>
+
+    // ---------- status changes made by other services ----------
+
+    /** Comparison (OPEN to UNDER_REVIEW) and approval (UNDER_REVIEW to APPROVED/REJECTED) move the RFQ here. */
+    @Override
+    public PurchaseRequestResponse applyStatusChange(Long id, StatusChange change) {
+<span class="fc" id="L259">        PurchaseRequest pr = find(id);</span>
+<span class="fc bfc" id="L260" title="All 2 branches covered.">        if (pr.getStatus() == change.to()) {</span>
+<span class="fc" id="L261">            return PurchaseRequestMapper.purchaseRequestResponse(pr); // repeated call: already done</span>
+        }
+<span class="fc bfc" id="L263" title="All 2 branches covered.">        if (pr.getStatus() != change.from()) {</span>
+<span class="fc" id="L264">            throw new BusinessRuleException(&quot;PR_STATUS_CHANGED&quot;, pr.getRequestNumber() + &quot; is &quot; + pr.getStatus()</span>
+<span class="fc" id="L265">                    + &quot;, not &quot; + change.from() + &quot;; reload and try again&quot;);</span>
+        }
+<span class="fc" id="L267">        pr.setStatus(change.to());</span>
+<span class="fc" id="L268">        Map&lt;String, Object&gt; details = new java.util.LinkedHashMap&lt;&gt;();</span>
+<span class="fc" id="L269">        details.put(&quot;from&quot;, change.from());</span>
+<span class="fc" id="L270">        details.put(&quot;to&quot;, change.to());</span>
+<span class="pc bpc" id="L271" title="1 of 2 branches missed.">        if (change.details() != null) {</span>
+<span class="fc" id="L272">            details.putAll(change.details());</span>
+        }
+<span class="pc bpc" id="L274" title="1 of 2 branches missed.">        auditService.recordAs(change.actor() == null ? CurrentUserProvider.SYSTEM_USER : change.actor(), AUDIT_TYPE,</span>
+<span class="fc" id="L275">                id, &quot;STATUS_CHANGED&quot;, details);</span>
+<span class="fc" id="L276">        return PurchaseRequestMapper.purchaseRequestResponse(pr);</span>
+    }
+
+
+    private void apply(PurchaseRequest pr, PurchaseRequestRequest request) {
+<span class="fc" id="L281">        MasterDataClient.EntitySnapshot entity = masterData.entity(request.entityId());</span>
+<span class="fc bfc" id="L282" title="All 2 branches covered.">        if (!entity.active()) {</span>
+<span class="fc" id="L283">            throw new BusinessRuleException(&quot;ENTITY_INACTIVE&quot;, entity.name() + &quot; is inactive&quot;);</span>
+        }
+<span class="fc" id="L285">        pr.setEntity(new NamedRef(entity.id(), entity.name()));</span>
+<span class="pc bpc" id="L286" title="1 of 2 branches missed.">        if (request.subEntityId() == null) {</span>
+<span class="fc" id="L287">            pr.setSubEntity(null);</span>
+<span class="fc" id="L288">        } else {</span>
+<span class="nc" id="L289">            MasterDataClient.SubEntitySnapshot sub = masterData.subEntity(entity.id(), request.subEntityId());</span>
+<span class="nc" id="L290">            pr.setSubEntity(new NamedRef(sub.id(), sub.name()));</span>
+        }
+<span class="pc bpc" id="L292" title="1 of 2 branches missed.">        if (request.customerId() == null) {</span>
+<span class="fc" id="L293">            pr.setCustomer(null);</span>
+<span class="fc" id="L294">        } else {</span>
+<span class="nc" id="L295">            MasterDataClient.CustomerSnapshot customer = masterData.customer(request.customerId());</span>
+<span class="nc" id="L296">            pr.setCustomer(new NamedRef(customer.id(), customer.name()));</span>
+        }
+<span class="fc" id="L298">        pr.setTitle(request.title().trim());</span>
+<span class="fc" id="L299">        pr.setDescription(Text.blankToNull(request.description()));</span>
+<span class="pc bpc" id="L300" title="1 of 2 branches missed.">        if (request.currency() != null) {</span>
+<span class="fc" id="L301">            pr.setCurrency(request.currency());</span>
+        }
+<span class="pc bpc" id="L303" title="1 of 4 branches missed.">        if (request.quotationsDue() != null &amp;&amp; !request.quotationsDue().equals(pr.getQuotationsDue())</span>
+<span class="fc bfc" id="L304" title="All 2 branches covered.">                &amp;&amp; request.quotationsDue().isBefore(java.time.LocalDate.now(clock))) {</span>
+<span class="fc" id="L305">            throw new BusinessRuleException(&quot;DUE_DATE_IN_PAST&quot;, &quot;The quotations-due date cannot be in the past&quot;);</span>
+        }
+<span class="pc bpc" id="L307" title="1 of 4 branches missed.">        if (request.quotationsDue() != null &amp;&amp; request.requiredBy() != null</span>
+<span class="fc bfc" id="L308" title="All 2 branches covered.">                &amp;&amp; request.quotationsDue().isAfter(request.requiredBy())) {</span>
+<span class="fc" id="L309">            throw new BusinessRuleException(&quot;DUE_AFTER_REQUIRED_BY&quot;,</span>
+<span class="fc" id="L310">                    &quot;Quotations must be due on or before the required-by date&quot;);</span>
+        }
+<span class="fc" id="L312">        pr.setRequiredBy(request.requiredBy());</span>
+<span class="fc" id="L313">        pr.setQuotationsDue(request.quotationsDue());</span>
+<span class="fc" id="L314">    }</span>
+
+    private static void applyItem(RequestItem item, RequestItemRequest request) {
+<span class="fc" id="L317">        item.setItemCode(Text.blankToNull(request.itemCode()));</span>
+<span class="fc" id="L318">        item.setDescription(request.description().trim());</span>
+<span class="fc" id="L319">        item.setQuantity(request.quantity());</span>
+<span class="fc" id="L320">        item.setUnitOfMeasure(request.unitOfMeasure().trim());</span>
+<span class="fc" id="L321">        item.setSpecifications(Text.blankToNull(request.specifications()));</span>
+<span class="fc" id="L322">    }</span>
+
+    // ---------- queries for the other services ----------
+
+    @Override
+    @Transactional(readOnly = true)
+    public List&lt;PurchaseRequestResponse&gt; getMany(Collection&lt;Long&gt; ids) {
+<span class="nc bnc" id="L329" title="All 4 branches missed.">        return ids == null || ids.isEmpty() ? List.of()</span>
+<span class="nc" id="L330">                : repository.findByIdIn(ids).stream().map(PurchaseRequestMapper::purchaseRequestResponse).toList();</span>
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public PageResponse&lt;PurchaseRequestResponse&gt; vendorView(Collection&lt;Long&gt; quotedIds, int page, int size) {
+        // an empty IN () is not valid SQL: -1 never matches
+<span class="nc bnc" id="L337" title="All 4 branches missed.">        Collection&lt;Long&gt; ids = quotedIds == null || quotedIds.isEmpty() ? List.of(-1L) : quotedIds;</span>
+<span class="nc" id="L338">        var pageable = PageRequest.of(Math.max(page, 0), Math.min(Math.max(size, 1), 100),</span>
+<span class="nc" id="L339">                Sort.by(Sort.Direction.DESC, PurchaseRequest::getCreatedAt, PurchaseRequest::getId));</span>
+<span class="nc" id="L340">        return PageResponse.of(repository.visibleToVendor(ids, pageable), PurchaseRequestMapper::purchaseRequestResponse);</span>
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public List&lt;Long&gt; openIds(Long requestedById) {
+<span class="nc" id="L346">        return repository.findOpenIds(requestedById);</span>
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public long countAwaitingAward(Long excludeRequestedById) {
+<span class="nc" id="L352">        return repository.countAwaitingAward(excludeRequestedById);</span>
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public Map&lt;String, Long&gt; countByStatus() {
+<span class="nc" id="L358">        Map&lt;String, Long&gt; counts = new java.util.LinkedHashMap&lt;&gt;();</span>
+<span class="nc bnc" id="L359" title="All 2 branches missed.">        for (PurchaseRequestStatus status : PurchaseRequestStatus.values()) {</span>
+<span class="nc" id="L360">            counts.put(status.name(), repository.countByStatus(status));</span>
+        }
+<span class="nc" id="L362">        return counts;</span>
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public long usage(String kind, Long id) {
+<span class="nc bnc" id="L368" title="All 5 branches missed.">        return switch (kind) {</span>
+<span class="nc" id="L369">            case &quot;entities&quot; -&gt; repository.countByEntityId(id);</span>
+<span class="nc" id="L370">            case &quot;sub-entities&quot; -&gt; repository.countBySubEntityId(id);</span>
+<span class="nc" id="L371">            case &quot;customers&quot; -&gt; repository.countByCustomerId(id);</span>
+<span class="nc" id="L372">            case &quot;users&quot; -&gt; repository.countByRequestedById(id);</span>
+<span class="nc" id="L373">            default -&gt; -1;</span>
+        };
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.13.202504020838</span></div></body></html>

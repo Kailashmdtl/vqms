@@ -1,0 +1,166 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>DocumentServiceImpl.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">SUTRA document service</a> &gt; <a href="index.source.html" class="el_package">com.sutra.document.service.impl</a> &gt; <span class="el_source">DocumentServiceImpl.java</span></div><h1>DocumentServiceImpl.java</h1><pre class="source lang-java linenums">package com.sutra.document.service.impl;
+
+import com.sutra.api.document.DocumentContracts.InspectedFile;
+import com.sutra.api.document.DocumentContracts.StoredDocument;
+import com.sutra.api.enums.FileFormat;
+import com.sutra.common.error.ResourceNotFoundException;
+import com.sutra.document.config.DocumentProperties;
+import com.sutra.document.entity.Document;
+import com.sutra.document.exception.InvalidQuotationFileException;
+import com.sutra.document.repository.DocumentRepository;
+import com.sutra.document.service.DocumentService;
+import com.sutra.document.service.internal.FileContentValidator;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.support.TransactionTemplate;
+import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.multipart.MultipartFile;
+
+import java.io.IOException;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.time.Clock;
+import java.time.Duration;
+import java.time.Instant;
+import java.util.ArrayList;
+import java.util.HexFormat;
+import java.util.List;
+
+@Service
+@Transactional
+public class DocumentServiceImpl implements DocumentService {
+
+<span class="fc" id="L36">    private static final Logger log = LoggerFactory.getLogger(DocumentServiceImpl.class);</span>
+
+    private final DocumentRepository repository;
+    private final FileContentValidator validator;
+    private final DocumentProperties properties;
+    private final Clock clock;
+    private final TransactionTemplate tx;
+
+<span class="fc" id="L44">    public DocumentServiceImpl(DocumentRepository repository, FileContentValidator validator,</span>
+                               DocumentProperties properties, Clock clock, TransactionTemplate tx) {
+<span class="fc" id="L46">        this.repository = repository;</span>
+<span class="fc" id="L47">        this.validator = validator;</span>
+<span class="fc" id="L48">        this.properties = properties;</span>
+<span class="fc" id="L49">        this.clock = clock;</span>
+<span class="fc" id="L50">        this.tx = tx;</span>
+<span class="fc" id="L51">    }</span>
+
+    @Override
+    public List&lt;StoredDocument&gt; store(List&lt;MultipartFile&gt; files, Long uploadedById, String uploadedByName) {
+<span class="pc bpc" id="L55" title="1 of 2 branches missed.">        List&lt;MultipartFile&gt; nonEmpty = files == null ? List.of()</span>
+<span class="pc bpc" id="L56" title="2 of 4 branches missed.">                : files.stream().filter(f -&gt; f != null &amp;&amp; !f.isEmpty()).toList();</span>
+<span class="fc bfc" id="L57" title="All 2 branches covered.">        if (nonEmpty.isEmpty()) {</span>
+<span class="fc" id="L58">            throw new InvalidQuotationFileException(&quot;No file was uploaded, or the files are empty.&quot;);</span>
+        }
+<span class="fc" id="L60">        List&lt;Document&gt; checked = new ArrayList&lt;&gt;();</span>
+<span class="fc bfc" id="L61" title="All 2 branches covered.">        for (MultipartFile file : nonEmpty) { // check all first: store every file or none</span>
+<span class="fc" id="L62">            String fileName = FileContentValidator.sanitiseFileName(file.getOriginalFilename());</span>
+<span class="fc" id="L63">            byte[] bytes = readBytes(file);</span>
+<span class="fc" id="L64">            FileFormat format = validator.validate(fileName, bytes);</span>
+<span class="fc" id="L65">            Document d = new Document();</span>
+<span class="fc" id="L66">            d.setFileName(fileName);</span>
+<span class="fc" id="L67">            d.setContentType(format.mimeType());</span>
+<span class="fc" id="L68">            d.setFileFormat(format);</span>
+<span class="fc" id="L69">            d.setSizeBytes(bytes.length);</span>
+<span class="fc" id="L70">            d.setSha256(sha256(bytes));</span>
+<span class="fc" id="L71">            d.setContent(bytes);</span>
+<span class="fc" id="L72">            d.setUploadedById(uploadedById);</span>
+<span class="fc" id="L73">            d.setUploadedByName(uploadedByName);</span>
+<span class="fc" id="L74">            d.setUploadedAt(Instant.now(clock));</span>
+<span class="fc" id="L75">            checked.add(d);</span>
+        }
+<span class="fc" id="L77">        List&lt;Document&gt; saved = repository.saveAll(checked);</span>
+<span class="fc" id="L78">        return saved.stream().map(DocumentServiceImpl::toStored).toList();</span>
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public InspectedFile inspect(MultipartFile file) {
+<span class="nc bnc" id="L84" title="All 4 branches missed.">        if (file == null || file.isEmpty()) {</span>
+<span class="nc" id="L85">            throw new InvalidQuotationFileException(&quot;No file was uploaded, or the file is empty.&quot;);</span>
+        }
+<span class="nc" id="L87">        String fileName = FileContentValidator.sanitiseFileName(file.getOriginalFilename());</span>
+<span class="nc" id="L88">        byte[] bytes = readBytes(file);</span>
+<span class="nc" id="L89">        FileFormat format = validator.validate(fileName, bytes);</span>
+<span class="nc" id="L90">        return new InspectedFile(fileName, format, bytes.length, sha256(bytes));</span>
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public List&lt;StoredDocument&gt; metadata(List&lt;Long&gt; ids) {
+<span class="nc bnc" id="L96" title="All 4 branches missed.">        return ids == null || ids.isEmpty() ? List.of() : repository.findMetadata(ids);</span>
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public Document get(Long id) {
+<span class="nc" id="L102">        return repository.findById(id).orElseThrow(() -&gt; new ResourceNotFoundException(&quot;Document&quot;, id));</span>
+    }
+
+    @Override
+    public void attach(List&lt;Long&gt; ids, String ownerType, Long ownerId) {
+<span class="nc bnc" id="L107" title="All 4 branches missed.">        if (ids != null &amp;&amp; !ids.isEmpty()) {</span>
+<span class="nc" id="L108">            repository.attach(ids, ownerType, ownerId);</span>
+        }
+<span class="nc" id="L110">    }</span>
+
+    @Override
+    public void delete(List&lt;Long&gt; ids) {
+<span class="nc bnc" id="L114" title="All 4 branches missed.">        if (ids != null &amp;&amp; !ids.isEmpty()) {</span>
+<span class="nc" id="L115">            repository.deleteAllByIdInBatch(ids);</span>
+        }
+<span class="nc" id="L117">    }</span>
+
+    /**
+     * Not one transaction: each orphan is deleted on its own, so a file that is referenced after all (its owner was
+     * saved but the attach call failed; the owner's foreign key protects it) is skipped without blocking the rest.
+     */
+    @Override
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
+    public int removeOrphans() {
+<span class="fc" id="L126">        Instant before = Instant.now(clock).minus(Duration.ofMinutes(properties.orphanAfterMinutes()));</span>
+<span class="fc" id="L127">        int removed = 0;</span>
+<span class="fc bfc" id="L128" title="All 2 branches covered.">        for (Long id : repository.findPendingBefore(before)) {</span>
+            try {
+<span class="fc" id="L130">                tx.executeWithoutResult(status -&gt; {</span>
+<span class="fc" id="L131">                    repository.deleteById(id);</span>
+<span class="fc" id="L132">                    repository.flush();</span>
+<span class="fc" id="L133">                });</span>
+<span class="fc" id="L134">                removed++;</span>
+<span class="fc" id="L135">            } catch (DataIntegrityViolationException e) {</span>
+<span class="fc" id="L136">                log.debug(&quot;Upload {} is referenced by its owner; kept&quot;, id);</span>
+            }
+        }
+<span class="pc bpc" id="L139" title="1 of 2 branches missed.">        if (removed &gt; 0) {</span>
+<span class="fc" id="L140">            log.info(&quot;Removed {} upload(s) that were never attached to a record&quot;, removed);</span>
+        }
+<span class="fc" id="L142">        return removed;</span>
+    }
+
+    static StoredDocument toStored(Document d) {
+<span class="fc" id="L146">        return new StoredDocument(d.getId(), d.getFileName(), d.getContentType(), d.getFileFormat(), d.getSizeBytes(),</span>
+<span class="fc" id="L147">                d.getSha256(), d.getUploadedAt());</span>
+    }
+
+    private static byte[] readBytes(MultipartFile file) {
+        try {
+<span class="fc" id="L152">            return file.getBytes();</span>
+<span class="nc" id="L153">        } catch (IOException e) {</span>
+<span class="nc" id="L154">            throw new InvalidQuotationFileException(&quot;The uploaded file could not be read.&quot;);</span>
+        }
+    }
+
+    public static String sha256(byte[] bytes) {
+        try {
+<span class="fc" id="L160">            return HexFormat.of().formatHex(MessageDigest.getInstance(&quot;SHA-256&quot;).digest(bytes));</span>
+<span class="nc" id="L161">        } catch (NoSuchAlgorithmException e) {</span>
+<span class="nc" id="L162">            throw new IllegalStateException(e);</span>
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.13.202504020838</span></div></body></html>

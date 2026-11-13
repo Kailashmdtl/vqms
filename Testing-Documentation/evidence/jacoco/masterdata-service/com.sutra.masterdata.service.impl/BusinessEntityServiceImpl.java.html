@@ -1,0 +1,198 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>BusinessEntityServiceImpl.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">SUTRA master data service</a> &gt; <a href="index.source.html" class="el_package">com.sutra.masterdata.service.impl</a> &gt; <span class="el_source">BusinessEntityServiceImpl.java</span></div><h1>BusinessEntityServiceImpl.java</h1><pre class="source lang-java linenums">package com.sutra.masterdata.service.impl;
+
+import com.sutra.masterdata.service.internal.CodeGenerator;
+import com.sutra.masterdata.service.BusinessEntityService;
+import com.sutra.common.audit.AuditService;
+
+import static com.sutra.common.audit.AuditService.details;
+
+import com.sutra.masterdata.entity.BusinessEntity;
+import com.sutra.masterdata.entity.SubEntity;
+import com.sutra.common.error.BusinessRuleException;
+import com.sutra.common.error.DuplicateResourceException;
+import com.sutra.masterdata.exception.EntityNotFoundException;
+import com.sutra.common.error.ResourceNotFoundException;
+import com.sutra.masterdata.repository.BusinessEntityRepository;
+import com.sutra.masterdata.repository.CustomerRepository;
+import com.sutra.masterdata.client.UsageClient;
+import com.sutra.masterdata.repository.SubEntityRepository;
+import com.sutra.masterdata.dto.request.MasterDataRequests.EntityRequest;
+import com.sutra.masterdata.dto.request.MasterDataRequests.SubEntityRequest;
+import com.sutra.masterdata.dto.response.MasterDataResponses.EntityResponse;
+import com.sutra.masterdata.dto.response.MasterDataResponses.SubEntityResponse;
+import com.sutra.common.web.PageResponse;
+import com.sutra.common.util.Text;
+import java.util.List;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Sort;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+/** Parent entities and their sub-entities. */
+@Service
+@Transactional
+public class BusinessEntityServiceImpl implements BusinessEntityService {
+
+    static final String AUDIT_TYPE = &quot;ENTITY&quot;;
+    static final String SUB_AUDIT_TYPE = &quot;SUB_ENTITY&quot;;
+
+    private final BusinessEntityRepository entityRepository;
+    private final SubEntityRepository subEntityRepository;
+    private final CustomerRepository customerRepository;
+    private final UsageClient usage;
+    private final AuditService auditService;
+
+<span class="fc" id="L45">    public BusinessEntityServiceImpl(BusinessEntityRepository entityRepository, SubEntityRepository subEntityRepository,</span>
+                                 CustomerRepository customerRepository,
+                                 UsageClient usage, AuditService auditService) {
+<span class="fc" id="L48">        this.entityRepository = entityRepository;</span>
+<span class="fc" id="L49">        this.subEntityRepository = subEntityRepository;</span>
+<span class="fc" id="L50">        this.customerRepository = customerRepository;</span>
+<span class="fc" id="L51">        this.usage = usage;</span>
+<span class="fc" id="L52">        this.auditService = auditService;</span>
+<span class="fc" id="L53">    }</span>
+
+    @Transactional(readOnly = true)
+    @Override
+    public PageResponse&lt;EntityResponse&gt; search(String q, int page, int size) {
+<span class="nc" id="L58">        var pageable = PageRequest.of(page, Math.min(size, 200), Sort.by(BusinessEntity::getName));</span>
+<span class="nc" id="L59">        return PageResponse.of(entityRepository.search(Text.blankToNull(q), pageable), EntityResponse::from);</span>
+    }
+
+    @Transactional(readOnly = true)
+    @Override
+    public EntityResponse get(Long id) {
+<span class="nc" id="L65">        return EntityResponse.from(find(id));</span>
+    }
+
+    @Override
+    public EntityResponse create(EntityRequest request) {
+<span class="pc bpc" id="L70" title="1 of 4 branches missed.">        String code = request.code() == null || request.code().isBlank()</span>
+<span class="fc" id="L71">                ? CodeGenerator.fromName(request.name(), entityRepository::existsByCodeIgnoreCase)</span>
+<span class="fc" id="L72">                : CodeGenerator.normalise(request.code());</span>
+<span class="fc bfc" id="L73" title="All 2 branches covered.">        if (entityRepository.existsByCodeIgnoreCase(code)) {</span>
+<span class="fc" id="L74">            throw new DuplicateResourceException(&quot;An entity with code &quot; + code + &quot; already exists&quot;);</span>
+        }
+<span class="fc" id="L76">        BusinessEntity entity = new BusinessEntity();</span>
+<span class="fc" id="L77">        apply(entity, request, code);</span>
+<span class="fc" id="L78">        entity = entityRepository.save(entity);</span>
+<span class="fc" id="L79">        auditService.record(AUDIT_TYPE, entity.getId(), &quot;CREATED&quot;, details(&quot;code&quot;, code, &quot;name&quot;, entity.getName()));</span>
+<span class="fc" id="L80">        return EntityResponse.from(entity);</span>
+    }
+
+    @Override
+    public EntityResponse update(Long id, EntityRequest request) {
+<span class="fc" id="L85">        BusinessEntity entity = find(id);</span>
+<span class="pc bpc" id="L86" title="2 of 4 branches missed.">        String code = request.code() == null || request.code().isBlank() ? entity.getCode() : CodeGenerator.normalise(request.code());</span>
+<span class="pc bpc" id="L87" title="1 of 2 branches missed.">        if (entityRepository.existsByCodeIgnoreCaseAndIdNot(code, id)) {</span>
+<span class="nc" id="L88">            throw new DuplicateResourceException(&quot;An entity with code &quot; + code + &quot; already exists&quot;);</span>
+        }
+<span class="fc" id="L90">        apply(entity, request, code);</span>
+<span class="fc" id="L91">        auditService.record(AUDIT_TYPE, id, &quot;UPDATED&quot;, details(&quot;code&quot;, code, &quot;name&quot;, entity.getName(),</span>
+<span class="fc" id="L92">                &quot;active&quot;, entity.isActive()));</span>
+<span class="fc" id="L93">        return EntityResponse.from(entity);</span>
+    }
+
+    @Override
+    public void delete(Long id) {
+<span class="fc" id="L98">        BusinessEntity entity = find(id);</span>
+<span class="fc bfc" id="L99" title="All 2 branches covered.">        if (subEntityRepository.countByEntityId(id) &gt; 0) {</span>
+<span class="fc" id="L100">            throw new BusinessRuleException(&quot;ENTITY_HAS_SUB_ENTITIES&quot;,</span>
+<span class="fc" id="L101">                    &quot;Delete or move the sub-entities of &quot; + entity.getName() + &quot; first, or deactivate it instead&quot;);</span>
+        }
+<span class="pc bpc" id="L103" title="2 of 4 branches missed.">        if (customerRepository.countByEntityId(id) &gt; 0 || usage.procurementUsage(&quot;entities&quot;, id).inUse()) {</span>
+<span class="fc" id="L104">            throw new BusinessRuleException(&quot;ENTITY_IN_USE&quot;,</span>
+<span class="fc" id="L105">                    entity.getName() + &quot; is referenced by customers or purchase requests; deactivate it instead&quot;);</span>
+        }
+<span class="nc" id="L107">        entityRepository.delete(entity);</span>
+<span class="nc" id="L108">        auditService.record(AUDIT_TYPE, id, &quot;DELETED&quot;, details(&quot;code&quot;, entity.getCode()));</span>
+<span class="nc" id="L109">    }</span>
+
+    // ---------- sub-entities ----------
+
+    @Transactional(readOnly = true)
+    @Override
+    public List&lt;SubEntityResponse&gt; listSubEntities(Long entityId) {
+<span class="nc" id="L116">        find(entityId);</span>
+<span class="nc" id="L117">        return subEntityRepository.findByEntityIdOrderByCode(entityId).stream().map(SubEntityResponse::from).toList();</span>
+    }
+
+    @Override
+    public SubEntityResponse createSubEntity(Long entityId, SubEntityRequest request) {
+<span class="fc" id="L122">        BusinessEntity parent = find(entityId);</span>
+<span class="pc bpc" id="L123" title="1 of 4 branches missed.">        String code = request.code() == null || request.code().isBlank()</span>
+<span class="fc" id="L124">                ? CodeGenerator.fromName(request.name(), c -&gt; subEntityRepository.existsByEntityIdAndCodeIgnoreCase(entityId, c))</span>
+<span class="fc" id="L125">                : CodeGenerator.normalise(request.code());</span>
+<span class="pc bpc" id="L126" title="1 of 2 branches missed.">        if (subEntityRepository.existsByEntityIdAndCodeIgnoreCase(entityId, code)) {</span>
+<span class="nc" id="L127">            throw new DuplicateResourceException(&quot;Sub-entity code &quot; + code + &quot; already exists under &quot; + parent.getName());</span>
+        }
+<span class="fc" id="L129">        SubEntity sub = new SubEntity();</span>
+<span class="fc" id="L130">        sub.setEntity(parent);</span>
+<span class="fc" id="L131">        applySub(sub, request, code);</span>
+<span class="fc" id="L132">        sub = subEntityRepository.save(sub);</span>
+<span class="fc" id="L133">        parent.getSubEntities().add(sub);</span>
+<span class="fc" id="L134">        auditService.record(SUB_AUDIT_TYPE, sub.getId(), &quot;CREATED&quot;, details(&quot;entityId&quot;, entityId, &quot;code&quot;, code));</span>
+<span class="fc" id="L135">        return SubEntityResponse.from(sub);</span>
+    }
+
+    @Override
+    public SubEntityResponse updateSubEntity(Long entityId, Long subEntityId, SubEntityRequest request) {
+<span class="nc" id="L140">        SubEntity sub = findSub(entityId, subEntityId);</span>
+<span class="nc bnc" id="L141" title="All 4 branches missed.">        String code = request.code() == null || request.code().isBlank() ? sub.getCode() : CodeGenerator.normalise(request.code());</span>
+<span class="nc bnc" id="L142" title="All 2 branches missed.">        if (subEntityRepository.existsByEntityIdAndCodeIgnoreCaseAndIdNot(entityId, code, subEntityId)) {</span>
+<span class="nc" id="L143">            throw new DuplicateResourceException(&quot;Sub-entity code &quot; + code + &quot; already exists under this entity&quot;);</span>
+        }
+<span class="nc" id="L145">        applySub(sub, request, code);</span>
+<span class="nc" id="L146">        auditService.record(SUB_AUDIT_TYPE, subEntityId, &quot;UPDATED&quot;, details(&quot;entityId&quot;, entityId, &quot;code&quot;, code,</span>
+<span class="nc" id="L147">                &quot;active&quot;, sub.isActive()));</span>
+<span class="nc" id="L148">        return SubEntityResponse.from(sub);</span>
+    }
+
+    @Override
+    public void deleteSubEntity(Long entityId, Long subEntityId) {
+<span class="nc" id="L153">        SubEntity sub = findSub(entityId, subEntityId);</span>
+<span class="nc bnc" id="L154" title="All 2 branches missed.">        if (usage.procurementUsage(&quot;sub-entities&quot;, subEntityId).inUse()) {</span>
+<span class="nc" id="L155">            throw new BusinessRuleException(&quot;SUB_ENTITY_IN_USE&quot;,</span>
+<span class="nc" id="L156">                    sub.getName() + &quot; is referenced by purchase requests; deactivate it instead&quot;);</span>
+        }
+<span class="nc" id="L158">        sub.getEntity().getSubEntities().remove(sub);</span>
+<span class="nc" id="L159">        subEntityRepository.delete(sub);</span>
+<span class="nc" id="L160">        auditService.record(SUB_AUDIT_TYPE, subEntityId, &quot;DELETED&quot;, details(&quot;entityId&quot;, entityId, &quot;code&quot;, sub.getCode()));</span>
+<span class="nc" id="L161">    }</span>
+
+    // ---------- helpers ----------
+
+    @Override
+    public BusinessEntity find(Long id) {
+<span class="fc" id="L167">        return entityRepository.findById(id).orElseThrow(() -&gt; new EntityNotFoundException(id));</span>
+    }
+
+    /** Loads a sub-entity and verifies it belongs to the given parent. */
+    @Override
+    public SubEntity findSub(Long entityId, Long subEntityId) {
+<span class="fc" id="L173">        SubEntity sub = subEntityRepository.findById(subEntityId)</span>
+<span class="pc" id="L174">                .orElseThrow(() -&gt; new ResourceNotFoundException(&quot;Sub-entity&quot;, subEntityId));</span>
+<span class="pc bpc" id="L175" title="1 of 2 branches missed.">        if (!sub.getEntity().getId().equals(entityId)) {</span>
+<span class="fc" id="L176">            throw new BusinessRuleException(&quot;SUB_ENTITY_PARENT_MISMATCH&quot;,</span>
+<span class="fc" id="L177">                    &quot;Sub-entity &quot; + subEntityId + &quot; does not belong to entity &quot; + entityId);</span>
+        }
+<span class="nc" id="L179">        return sub;</span>
+    }
+
+    private static void apply(BusinessEntity entity, EntityRequest request, String code) {
+<span class="fc" id="L183">        entity.setCode(code);</span>
+<span class="fc" id="L184">        entity.setName(request.name().trim());</span>
+<span class="fc" id="L185">        entity.setDescription(Text.blankToNull(request.description()));</span>
+<span class="fc" id="L186">        entity.setAddress(Text.blankToNull(request.address()));</span>
+<span class="pc bpc" id="L187" title="1 of 4 branches missed.">        entity.setActive(request.active() == null || request.active());</span>
+<span class="fc" id="L188">    }</span>
+
+    private static void applySub(SubEntity sub, SubEntityRequest request, String code) {
+<span class="fc" id="L191">        sub.setCode(code);</span>
+<span class="fc" id="L192">        sub.setName(request.name().trim());</span>
+<span class="fc" id="L193">        sub.setDescription(Text.blankToNull(request.description()));</span>
+<span class="pc bpc" id="L194" title="1 of 4 branches missed.">        sub.setActive(request.active() == null || request.active());</span>
+<span class="fc" id="L195">    }</span>
+
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.13.202504020838</span></div></body></html>

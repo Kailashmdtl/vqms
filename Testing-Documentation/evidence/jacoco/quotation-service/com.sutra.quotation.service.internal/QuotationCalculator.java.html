@@ -1,0 +1,205 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>QuotationCalculator.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">SUTRA quotation service</a> &gt; <a href="index.source.html" class="el_package">com.sutra.quotation.service.internal</a> &gt; <span class="el_source">QuotationCalculator.java</span></div><h1>QuotationCalculator.java</h1><pre class="source lang-java linenums"><span class="fc" id="L1">package com.sutra.quotation.service.internal;</span>
+
+import com.sutra.api.rules.FlagCodes;
+import static com.sutra.common.util.Money.approximatelyEqual;
+import static com.sutra.common.util.Money.percentOf;
+import static com.sutra.common.util.Money.round;
+
+import com.sutra.quotation.entity.Quotation;
+import com.sutra.quotation.entity.QuotationItem;
+import java.math.BigDecimal;
+import java.util.ArrayList;
+import java.util.List;
+import org.springframework.stereotype.Component;
+
+/**
+ * Authoritative arithmetic for quotations. AI output is never trusted for totals: every line and
+ * quotation total is recomputed here, and any disagreement with the document's printed figures is flagged.
+ *
+ * &lt;pre&gt;
+ * base      = quantity x unitPrice
+ * discount  = discountAmount, else base x discountPercent / 100
+ * taxable   = base - discount
+ * tax       = taxAmount, else taxable x taxPercent / 100
+ * lineTotal = taxable + tax
+ * &lt;/pre&gt;
+ */
+@Component
+<span class="fc" id="L28">public class QuotationCalculator {</span>
+
+    /** Recalculates every line and the quotation totals in place, and returns arithmetic flags. */
+    public List&lt;FlagDraft&gt; recalculate(Quotation quotation) {
+<span class="fc" id="L32">        List&lt;FlagDraft&gt; flags = new ArrayList&lt;&gt;();</span>
+<span class="fc" id="L33">        applyDocumentLevelTax(quotation, flags);</span>
+<span class="fc" id="L34">        BigDecimal subtotal = BigDecimal.ZERO;</span>
+<span class="fc" id="L35">        BigDecimal discountTotal = BigDecimal.ZERO;</span>
+<span class="fc" id="L36">        BigDecimal taxTotal = BigDecimal.ZERO;</span>
+<span class="fc" id="L37">        boolean complete = true;</span>
+
+<span class="fc bfc" id="L39" title="All 2 branches covered.">        for (QuotationItem item : quotation.getItems()) {</span>
+<span class="fc" id="L40">            LineAmounts amounts = calculateLine(item, flags);</span>
+<span class="fc bfc" id="L41" title="All 2 branches covered.">            if (amounts == null) {</span>
+<span class="fc" id="L42">                complete = false;</span>
+<span class="fc" id="L43">                item.setLineTotal(null);</span>
+<span class="fc" id="L44">                continue;</span>
+            }
+<span class="fc" id="L46">            item.setLineTotal(amounts.total());</span>
+<span class="fc" id="L47">            subtotal = subtotal.add(amounts.taxable());</span>
+<span class="fc" id="L48">            discountTotal = discountTotal.add(amounts.discount());</span>
+<span class="fc" id="L49">            taxTotal = taxTotal.add(amounts.tax());</span>
+        }
+
+<span class="pc bpc" id="L52" title="1 of 4 branches missed.">        if (quotation.getItems().isEmpty() || !complete) {</span>
+            // Partial totals would be misleading, so totals stay empty until every line is priced.
+<span class="fc" id="L54">            quotation.setSubtotal(null);</span>
+<span class="fc" id="L55">            quotation.setDiscountTotal(null);</span>
+<span class="fc" id="L56">            quotation.setTaxTotal(null);</span>
+<span class="fc" id="L57">            quotation.setGrandTotal(null);</span>
+<span class="fc" id="L58">            return flags;</span>
+        }
+
+<span class="fc" id="L61">        quotation.setSubtotal(round(subtotal));</span>
+<span class="fc" id="L62">        quotation.setDiscountTotal(round(discountTotal));</span>
+<span class="fc" id="L63">        quotation.setTaxTotal(round(taxTotal));</span>
+<span class="fc" id="L64">        quotation.setGrandTotal(round(subtotal.add(taxTotal)));</span>
+
+        // Vendors print the subtotal before discount (gross), after discount (taxable value) or with tax.
+<span class="fc" id="L67">        BigDecimal grossBeforeDiscount = round(subtotal.add(discountTotal));</span>
+<span class="fc" id="L68">        compareStated(flags, &quot;statedSubtotal&quot;, FlagCodes.SUBTOTAL_MISMATCH, &quot;Subtotal&quot;,</span>
+<span class="fc" id="L69">                quotation.getStatedSubtotal(), quotation.getSubtotal(), grossBeforeDiscount, quotation.getGrandTotal());</span>
+<span class="fc" id="L70">        compareStated(flags, &quot;statedTaxTotal&quot;, FlagCodes.TAX_TOTAL_MISMATCH, &quot;Tax total&quot;,</span>
+<span class="fc" id="L71">                quotation.getStatedTaxTotal(), quotation.getTaxTotal());</span>
+<span class="fc" id="L72">        compareStated(flags, &quot;statedGrandTotal&quot;, FlagCodes.GRAND_TOTAL_MISMATCH, &quot;Grand total&quot;,</span>
+<span class="fc" id="L73">                quotation.getStatedGrandTotal(), quotation.getGrandTotal());</span>
+<span class="fc" id="L74">        return flags;</span>
+    }
+
+    /**
+     * Many quotations print tax once (&quot;GST 18%&quot;) below the subtotal instead of per line. Left alone, such a
+     * vendor's lines would look cheaper than tax-inclusive lines from other vendors. When no line carries tax but
+     * the document states a tax total, the implied rate (stated tax / taxable subtotal) is applied to every line
+     * and an INFO flag records it.
+     */
+    void applyDocumentLevelTax(Quotation quotation, List&lt;FlagDraft&gt; flags) {
+<span class="fc" id="L84">        BigDecimal statedTax = quotation.getStatedTaxTotal();</span>
+<span class="pc bpc" id="L85" title="2 of 6 branches missed.">        if (statedTax == null || statedTax.signum() &lt;= 0 || quotation.getItems().isEmpty()) {</span>
+<span class="fc" id="L86">            return;</span>
+        }
+<span class="fc" id="L88">        boolean anyLineTax = quotation.getItems().stream()</span>
+<span class="pc bpc" id="L89" title="1 of 4 branches missed.">                .anyMatch(i -&gt; i.getTaxPercent() != null || i.getTaxAmount() != null);</span>
+<span class="fc" id="L90">        boolean allPriced = quotation.getItems().stream()</span>
+<span class="pc bpc" id="L91" title="2 of 4 branches missed.">                .allMatch(i -&gt; i.getQuantity() != null &amp;&amp; i.getUnitPrice() != null);</span>
+<span class="pc bpc" id="L92" title="1 of 4 branches missed.">        if (anyLineTax || !allPriced) {</span>
+<span class="fc" id="L93">            return;</span>
+        }
+<span class="fc" id="L95">        BigDecimal taxable = BigDecimal.ZERO;</span>
+<span class="fc bfc" id="L96" title="All 2 branches covered.">        for (QuotationItem item : quotation.getItems()) {</span>
+<span class="fc" id="L97">            BigDecimal base = item.getQuantity().multiply(item.getUnitPrice());</span>
+<span class="pc bpc" id="L98" title="1 of 2 branches missed.">            BigDecimal discount = item.getDiscountAmount() != null ? item.getDiscountAmount()</span>
+<span class="pc bpc" id="L99" title="1 of 2 branches missed.">                    : item.getDiscountPercent() != null ? percentOf(base, item.getDiscountPercent()) : BigDecimal.ZERO;</span>
+<span class="fc" id="L100">            taxable = taxable.add(base.subtract(discount));</span>
+        }
+<span class="pc bpc" id="L102" title="1 of 2 branches missed.">        if (taxable.signum() &lt;= 0) {</span>
+<span class="nc" id="L103">            return;</span>
+        }
+<span class="fc" id="L105">        BigDecimal rate = statedTax.multiply(BigDecimal.valueOf(100)).divide(taxable, 4, java.math.RoundingMode.HALF_UP);</span>
+<span class="pc bpc" id="L106" title="1 of 2 branches missed.">        if (rate.compareTo(BigDecimal.valueOf(100)) &gt; 0) {</span>
+<span class="nc" id="L107">            return;</span>
+        }
+<span class="fc" id="L109">        String note = &quot;Tax rate derived from the document's tax total&quot;;</span>
+<span class="fc" id="L110">        quotation.getItems().forEach(i -&gt; {</span>
+<span class="fc" id="L111">            i.setTaxPercent(rate);</span>
+<span class="pc bpc" id="L112" title="1 of 2 branches missed.">            i.setNotes(i.getNotes() == null ? note : i.getNotes() + &quot;; &quot; + note);</span>
+<span class="fc" id="L113">        });</span>
+<span class="fc" id="L114">        flags.add(FlagDraft.info(null, &quot;taxPercent&quot;, FlagCodes.DOCUMENT_LEVEL_TAX,</span>
+<span class="fc" id="L115">                &quot;Tax is stated only as a document total; the implied rate of &quot; + rate.stripTrailingZeros().toPlainString()</span>
+                        + &quot;% was applied to every line so vendors compare on the same basis&quot;));
+<span class="fc" id="L117">    }</span>
+
+    /** Returns null (and adds an ERROR flag) when quantity or unit price is missing. */
+    LineAmounts calculateLine(QuotationItem item, List&lt;FlagDraft&gt; flags) {
+<span class="fc" id="L121">        boolean missing = false;</span>
+<span class="fc bfc" id="L122" title="All 2 branches covered.">        if (item.getQuantity() == null) {</span>
+<span class="fc" id="L123">            flags.add(FlagDraft.error(item, &quot;quantity&quot;, FlagCodes.MISSING_QUANTITY,</span>
+<span class="fc" id="L124">                    &quot;Line &quot; + item.getLineNumber() + &quot;: quantity is missing&quot;));</span>
+<span class="fc" id="L125">            missing = true;</span>
+        }
+<span class="fc bfc" id="L127" title="All 2 branches covered.">        if (item.getUnitPrice() == null) {</span>
+<span class="fc" id="L128">            flags.add(FlagDraft.error(item, &quot;unitPrice&quot;, FlagCodes.MISSING_UNIT_PRICE,</span>
+<span class="fc" id="L129">                    &quot;Line &quot; + item.getLineNumber() + &quot;: unit price is missing&quot;));</span>
+<span class="fc" id="L130">            missing = true;</span>
+        }
+<span class="fc bfc" id="L132" title="All 2 branches covered.">        if (missing) {</span>
+<span class="fc" id="L133">            return null;</span>
+        }
+
+<span class="fc" id="L136">        BigDecimal base = item.getQuantity().multiply(item.getUnitPrice());</span>
+
+        BigDecimal discount;
+<span class="fc bfc" id="L139" title="All 2 branches covered.">        if (item.getDiscountAmount() != null) {</span>
+<span class="fc" id="L140">            discount = item.getDiscountAmount();</span>
+<span class="pc bpc" id="L141" title="1 of 2 branches missed.">            if (item.getDiscountPercent() != null</span>
+<span class="pc bpc" id="L142" title="1 of 2 branches missed.">                    &amp;&amp; !approximatelyEqual(round(percentOf(base, item.getDiscountPercent())), round(discount))) {</span>
+<span class="fc" id="L143">                flags.add(FlagDraft.warning(item, &quot;discountAmount&quot;, FlagCodes.DISCOUNT_CONFLICT,</span>
+<span class="fc" id="L144">                        &quot;Line &quot; + item.getLineNumber() + &quot;: discount amount &quot; + round(discount)</span>
+<span class="fc" id="L145">                                + &quot; does not match &quot; + item.getDiscountPercent().stripTrailingZeros().toPlainString()</span>
+<span class="fc" id="L146">                                + &quot;% of &quot; + round(base) + &quot;; the amount was used&quot;));</span>
+            }
+<span class="fc bfc" id="L148" title="All 2 branches covered.">        } else if (item.getDiscountPercent() != null) {</span>
+<span class="fc" id="L149">            discount = percentOf(base, item.getDiscountPercent());</span>
+<span class="fc" id="L150">        } else {</span>
+<span class="fc" id="L151">            discount = BigDecimal.ZERO;</span>
+        }
+<span class="fc" id="L153">        BigDecimal taxable = base.subtract(discount);</span>
+
+        BigDecimal tax;
+<span class="pc bpc" id="L156" title="1 of 2 branches missed.">        if (item.getTaxAmount() != null) {</span>
+<span class="nc" id="L157">            tax = item.getTaxAmount();</span>
+<span class="nc bnc" id="L158" title="All 2 branches missed.">            if (item.getTaxPercent() != null</span>
+<span class="nc bnc" id="L159" title="All 2 branches missed.">                    &amp;&amp; !approximatelyEqual(round(percentOf(taxable, item.getTaxPercent())), round(tax))) {</span>
+<span class="nc" id="L160">                flags.add(FlagDraft.warning(item, &quot;taxAmount&quot;, FlagCodes.TAX_CONFLICT,</span>
+<span class="nc" id="L161">                        &quot;Line &quot; + item.getLineNumber() + &quot;: tax amount &quot; + round(tax) + &quot; does not match &quot;</span>
+<span class="nc" id="L162">                                + item.getTaxPercent().stripTrailingZeros().toPlainString() + &quot;% of &quot;</span>
+<span class="nc" id="L163">                                + round(taxable) + &quot;; the amount was used&quot;));</span>
+            }
+<span class="pc bfc" id="L165" title="All 2 branches covered.">        } else if (item.getTaxPercent() != null) {</span>
+<span class="fc" id="L166">            tax = percentOf(taxable, item.getTaxPercent());</span>
+<span class="fc" id="L167">        } else {</span>
+<span class="fc" id="L168">            tax = BigDecimal.ZERO;</span>
+        }
+
+<span class="fc" id="L171">        BigDecimal total = round(taxable.add(tax));</span>
+<span class="fc" id="L172">        BigDecimal stated = item.getStatedLineTotal();</span>
+        // Vendors print line totals either before or after tax; both are accepted.
+<span class="fc bfc" id="L174" title="All 6 branches covered.">        if (stated != null &amp;&amp; !approximatelyEqual(stated, total) &amp;&amp; !approximatelyEqual(stated, round(taxable))) {</span>
+<span class="fc" id="L175">            flags.add(FlagDraft.warning(item, &quot;statedLineTotal&quot;, FlagCodes.LINE_TOTAL_MISMATCH,</span>
+<span class="fc" id="L176">                    &quot;Line &quot; + item.getLineNumber() + &quot;: document shows &quot; + round(stated)</span>
+<span class="fc" id="L177">                            + &quot; but quantity x price gives &quot; + round(taxable) + &quot; before tax and &quot; + total</span>
+                            + &quot; after tax&quot;));
+        }
+<span class="fc" id="L180">        return new LineAmounts(round(base), round(discount), round(taxable), round(tax), total);</span>
+    }
+
+    private void compareStated(List&lt;FlagDraft&gt; flags, String field, String code, String label,
+                               BigDecimal stated, BigDecimal calculated, BigDecimal... alternatives) {
+<span class="pc bpc" id="L185" title="1 of 4 branches missed.">        if (stated == null || calculated == null) {</span>
+<span class="fc" id="L186">            return;</span>
+        }
+<span class="fc bfc" id="L188" title="All 2 branches covered.">        if (approximatelyEqual(stated, calculated)) {</span>
+<span class="fc" id="L189">            return;</span>
+        }
+<span class="pc bfc" id="L191" title="All 2 branches covered.">        for (BigDecimal alternative : alternatives) {</span>
+<span class="pc bpc" id="L192" title="2 of 4 branches missed.">            if (alternative != null &amp;&amp; approximatelyEqual(stated, alternative)) {</span>
+<span class="fc" id="L193">                return;</span>
+            }
+        }
+<span class="fc" id="L196">        flags.add(FlagDraft.warning(null, field, code, label + &quot; on the document (&quot; + round(stated)</span>
+<span class="fc" id="L197">                + &quot;) differs from the calculated &quot; + calculated + &quot; by &quot; + round(stated.subtract(calculated).abs())</span>
+                + &quot;. Check for charges, rounding or extraction errors.&quot;));
+<span class="fc" id="L199">    }</span>
+
+    public record LineAmounts(BigDecimal base, BigDecimal discount, BigDecimal taxable, BigDecimal tax,
+                              BigDecimal total) {
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.13.202504020838</span></div></body></html>

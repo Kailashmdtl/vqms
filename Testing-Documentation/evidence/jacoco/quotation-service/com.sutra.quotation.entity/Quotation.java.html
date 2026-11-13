@@ -1,0 +1,154 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>Quotation.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">SUTRA quotation service</a> &gt; <a href="index.source.html" class="el_package">com.sutra.quotation.entity</a> &gt; <span class="el_source">Quotation.java</span></div><h1>Quotation.java</h1><pre class="source lang-java linenums">package com.sutra.quotation.entity;
+
+import com.sutra.quotation.entity.base.AuditableEntity;
+import com.sutra.api.enums.ExtractionSource;
+import com.sutra.api.enums.QuotationStatus;
+import jakarta.persistence.CascadeType;
+import jakarta.persistence.Column;
+import jakarta.persistence.Embedded;
+import jakarta.persistence.AttributeOverride;
+import jakarta.persistence.Entity;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
+import jakarta.persistence.OneToMany;
+import jakarta.persistence.OrderBy;
+import jakarta.persistence.Table;
+import jakarta.persistence.Version;
+import java.math.BigDecimal;
+import java.time.Instant;
+import java.time.LocalDate;
+import java.util.ArrayList;
+import java.util.List;
+import lombok.Getter;
+import lombok.Setter;
+
+/**
+ * A vendor's quotation against a purchase request. Its original files are kept by the document service and
+ * referenced from {@link QuotationFile}; extracted data lives in
+ * {@link QuotationItem} rows and review flags in {@link QuotationFlag}.
+ */
+@Entity
+@Table(name = &quot;quotation&quot;)
+@Getter
+@Setter
+<span class="fc" id="L34">public class Quotation extends AuditableEntity {</span>
+
+    /** The RFQ (owned by the RFQ service; a cross-schema foreign key keeps it valid). */
+    @Column(name = &quot;purchase_request_id&quot;, nullable = false, updatable = false)
+    private Long purchaseRequestId;
+
+    /** The RFQ's number, kept so lists never need the RFQ service just to show it (it never changes). */
+    @Column(name = &quot;request_number&quot;, nullable = false, length = 30, updatable = false)
+    private String requestNumber;
+
+    @Embedded
+    @AttributeOverride(name = &quot;id&quot;, column = @Column(name = &quot;vendor_id&quot;, nullable = false))
+    @AttributeOverride(name = &quot;name&quot;, column = @Column(name = &quot;vendor_name&quot;, nullable = false))
+    private NamedRef vendor;
+
+    @Column(name = &quot;quotation_number&quot;, length = 60)
+    private String quotationNumber;
+
+    @Column(name = &quot;quotation_date&quot;)
+    private LocalDate quotationDate;
+
+    @Column(name = &quot;valid_until&quot;)
+    private LocalDate validUntil;
+
+    @Column(length = 3)
+    private String currency;
+
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false, length = 25)
+<span class="fc" id="L63">    private QuotationStatus status = QuotationStatus.UPLOADED;</span>
+
+    @Column(precision = 18, scale = 2)
+    private BigDecimal subtotal;
+
+    @Column(name = &quot;discount_total&quot;, precision = 18, scale = 2)
+    private BigDecimal discountTotal;
+
+    @Column(name = &quot;tax_total&quot;, precision = 18, scale = 2)
+    private BigDecimal taxTotal;
+
+    @Column(name = &quot;grand_total&quot;, precision = 18, scale = 2)
+    private BigDecimal grandTotal;
+
+    @Column(name = &quot;stated_subtotal&quot;, precision = 18, scale = 2)
+    private BigDecimal statedSubtotal;
+
+    @Column(name = &quot;stated_tax_total&quot;, precision = 18, scale = 2)
+    private BigDecimal statedTaxTotal;
+
+    @Column(name = &quot;stated_grand_total&quot;, precision = 18, scale = 2)
+    private BigDecimal statedGrandTotal;
+
+    @Column(name = &quot;delivery_terms&quot;, columnDefinition = &quot;text&quot;)
+    private String deliveryTerms;
+
+    @Column(name = &quot;payment_terms&quot;, columnDefinition = &quot;text&quot;)
+    private String paymentTerms;
+
+    @Column(name = &quot;warranty_terms&quot;, columnDefinition = &quot;text&quot;)
+    private String warrantyTerms;
+
+    @Column(columnDefinition = &quot;text&quot;)
+    private String notes;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = &quot;extraction_source&quot;, length = 20)
+    private ExtractionSource extractionSource;
+
+    @Column(name = &quot;extraction_confidence&quot;, precision = 4, scale = 3)
+    private BigDecimal extractionConfidence;
+
+    @Column(name = &quot;failure_reason&quot;, columnDefinition = &quot;text&quot;)
+    private String failureReason;
+
+    @Column(name = &quot;processing_attempts&quot;, nullable = false)
+    private int processingAttempts;
+
+    @Column(name = &quot;last_processed_at&quot;)
+    private Instant lastProcessedAt;
+
+    @Embedded
+    @AttributeOverride(name = &quot;id&quot;, column = @Column(name = &quot;uploaded_by_id&quot;, nullable = false))
+    @AttributeOverride(name = &quot;username&quot;, column = @Column(name = &quot;uploaded_by_name&quot;, nullable = false))
+    private UserRef uploadedBy;
+
+    /** True when the vendor submitted it through the vendor portal; false when a buyer uploaded it. */
+    @Column(name = &quot;submitted_by_vendor&quot;, nullable = false)
+    private boolean submittedByVendor;
+
+    /** Optimistic-lock version; also recorded in comparison reports to show which data was compared. */
+    @Version
+    @Column(nullable = false)
+    private Long version;
+
+    @OneToMany(mappedBy = &quot;quotation&quot;, cascade = CascadeType.ALL, orphanRemoval = true)
+    @OrderBy(&quot;lineNumber&quot;)
+<span class="fc" id="L130">    private List&lt;QuotationItem&gt; items = new ArrayList&lt;&gt;();</span>
+
+    @OneToMany(mappedBy = &quot;quotation&quot;, cascade = CascadeType.ALL, orphanRemoval = true)
+    @OrderBy(&quot;id&quot;)
+<span class="fc" id="L134">    private List&lt;QuotationFlag&gt; flags = new ArrayList&lt;&gt;();</span>
+
+    public void addItem(QuotationItem item) {
+<span class="fc" id="L137">        item.setQuotation(this);</span>
+<span class="fc" id="L138">        items.add(item);</span>
+<span class="fc" id="L139">    }</span>
+
+    public void addFlag(QuotationFlag flag) {
+<span class="fc" id="L142">        flag.setQuotation(this);</span>
+<span class="fc" id="L143">        flags.add(flag);</span>
+<span class="fc" id="L144">    }</span>
+
+    public int nextLineNumber() {
+<span class="fc" id="L147">        return items.stream().mapToInt(QuotationItem::getLineNumber).max().orElse(0) + 1;</span>
+    }
+
+    public long openFlagCount() {
+<span class="pc bpc" id="L151" title="1 of 2 branches missed.">        return flags.stream().filter(f -&gt; !f.isResolved()).count();</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.13.202504020838</span></div></body></html>

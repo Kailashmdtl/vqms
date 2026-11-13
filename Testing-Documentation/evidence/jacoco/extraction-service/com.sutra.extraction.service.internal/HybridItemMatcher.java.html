@@ -1,0 +1,146 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>HybridItemMatcher.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">SUTRA extraction service</a> &gt; <a href="index.source.html" class="el_package">com.sutra.extraction.service.internal</a> &gt; <span class="el_source">HybridItemMatcher.java</span></div><h1>HybridItemMatcher.java</h1><pre class="source lang-java linenums">package com.sutra.extraction.service.internal;
+
+import com.sutra.api.extraction.ExtractedQuotation.ExtractedItem;
+import com.sutra.api.internal.InternalContracts.LineMatch;
+import com.sutra.api.internal.InternalContracts.RequestedLine;
+import com.sutra.extraction.client.DocumentProcessingClient;
+import com.sutra.extraction.client.DocumentProcessingClient.MatchQuotedItem;
+import com.sutra.extraction.client.DocumentProcessingClient.MatchRequestItem;
+import com.sutra.extraction.client.DocumentProcessingClient.MatchScore;
+import com.sutra.extraction.exception.QuotationProcessingException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Component;
+
+import java.math.BigDecimal;
+import java.math.RoundingMode;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+import java.util.Set;
+
+/**
+ * Matches quoted lines to requested lines. Exact item codes first (e.g. IT-001). The remaining lines are scored
+ * with the Python fuzzy matcher, falling back to local token similarity, then assigned greedily from the highest
+ * score down, so each requested line is used at most once. Lines without a description are never matched.
+ */
+@Component
+public class HybridItemMatcher {
+
+    /** Score below which a quoted line is left unmatched. */
+<span class="fc" id="L35">    public static final BigDecimal MINIMUM_SCORE = new BigDecimal(&quot;0.35&quot;);</span>
+
+<span class="fc" id="L37">    private static final Logger log = LoggerFactory.getLogger(HybridItemMatcher.class);</span>
+
+    private final DocumentProcessingClient documentClient;
+
+<span class="fc" id="L41">    public HybridItemMatcher(DocumentProcessingClient documentClient) {</span>
+<span class="fc" id="L42">        this.documentClient = documentClient;</span>
+<span class="fc" id="L43">    }</span>
+
+    /** {@code LineMatch.index} is the position of the quoted line in {@code quoted}. */
+    public List&lt;LineMatch&gt; match(List&lt;RequestedLine&gt; requested, List&lt;ExtractedItem&gt; quoted) {
+<span class="fc" id="L47">        List&lt;LineMatch&gt; matches = new ArrayList&lt;&gt;();</span>
+<span class="pc bpc" id="L48" title="2 of 4 branches missed.">        if (requested.isEmpty() || quoted.isEmpty()) {</span>
+<span class="nc" id="L49">            return matches;</span>
+        }
+<span class="fc" id="L51">        Set&lt;Integer&gt; usedQuoted = new HashSet&lt;&gt;();</span>
+<span class="fc" id="L52">        Set&lt;Long&gt; usedRequested = new HashSet&lt;&gt;();</span>
+<span class="fc bfc" id="L53" title="All 2 branches covered.">        for (int i = 0; i &lt; quoted.size(); i++) {</span>
+<span class="fc bfc" id="L54" title="All 2 branches covered.">            if (isBlank(quoted.get(i).description())) {</span>
+<span class="fc" id="L55">                usedQuoted.add(i); // skipped by the quotation service as well</span>
+            }
+        }
+        // 1. Exact item-code matches (vendor line &quot;IT-001&quot; -&gt; request line &quot;IT-001&quot;) are certain.
+<span class="fc" id="L59">        Map&lt;String, RequestedLine&gt; byCode = new HashMap&lt;&gt;();</span>
+<span class="fc bfc" id="L60" title="All 2 branches covered.">        for (RequestedLine r : requested) {</span>
+<span class="fc" id="L61">            String code = normaliseCode(r.itemCode());</span>
+<span class="fc bfc" id="L62" title="All 2 branches covered.">            if (code != null) {</span>
+<span class="fc" id="L63">                byCode.putIfAbsent(code, r);</span>
+            }
+        }
+<span class="fc bfc" id="L66" title="All 2 branches covered.">        for (int i = 0; i &lt; quoted.size(); i++) {</span>
+<span class="fc bfc" id="L67" title="All 2 branches covered.">            if (usedQuoted.contains(i)) {</span>
+<span class="fc" id="L68">                continue;</span>
+            }
+<span class="fc" id="L70">            RequestedLine match = byCode.get(normaliseCode(quoted.get(i).itemCode().orElse(null)));</span>
+<span class="pc bpc" id="L71" title="1 of 4 branches missed.">            if (match != null &amp;&amp; !usedRequested.contains(match.id())) {</span>
+<span class="fc" id="L72">                matches.add(new LineMatch(i, match.id(), BigDecimal.ONE.setScale(3, RoundingMode.HALF_UP)));</span>
+<span class="fc" id="L73">                usedQuoted.add(i);</span>
+<span class="fc" id="L74">                usedRequested.add(match.id());</span>
+            }
+        }
+<span class="pc bpc" id="L77" title="1 of 4 branches missed.">        if (usedQuoted.size() == quoted.size() || usedRequested.size() == requested.size()) {</span>
+<span class="fc" id="L78">            return matches;</span>
+        }
+        // 2. Fuzzy description matching for the rest, highest score first.
+<span class="fc" id="L81">        score(requested, quoted).stream()</span>
+<span class="fc bfc" id="L82" title="All 2 branches covered.">                .filter(s -&gt; s.score() &gt;= MINIMUM_SCORE.doubleValue())</span>
+<span class="fc" id="L83">                .sorted(Comparator.comparingDouble(MatchScore::score).reversed().thenComparingInt(MatchScore::quotedIndex))</span>
+<span class="fc" id="L84">                .forEach(s -&gt; {</span>
+<span class="pc bpc" id="L85" title="1 of 4 branches missed.">                    if (usedQuoted.contains(s.quotedIndex()) || usedRequested.contains(s.requestItemId())) {</span>
+<span class="fc" id="L86">                        return;</span>
+                    }
+<span class="fc" id="L88">                    matches.add(new LineMatch(s.quotedIndex(), s.requestItemId(),</span>
+<span class="fc" id="L89">                            BigDecimal.valueOf(Math.min(1.0, s.score())).setScale(3, RoundingMode.HALF_UP)));</span>
+<span class="fc" id="L90">                    usedQuoted.add(s.quotedIndex());</span>
+<span class="fc" id="L91">                    usedRequested.add(s.requestItemId());</span>
+<span class="fc" id="L92">                });</span>
+<span class="fc" id="L93">        matches.sort(Comparator.comparingInt(LineMatch::index));</span>
+<span class="fc" id="L94">        return matches;</span>
+    }
+
+    /** &quot;it-001&quot;, &quot;IT 001&quot; and &quot;IT001&quot; are the same code. */
+    static String normaliseCode(String code) {
+<span class="fc bfc" id="L99" title="All 2 branches covered.">        if (code == null) {</span>
+<span class="fc" id="L100">            return null;</span>
+        }
+<span class="fc" id="L102">        String normalised = code.toUpperCase(Locale.ROOT).replaceAll(&quot;[^A-Z0-9]&quot;, &quot;&quot;);</span>
+<span class="pc bpc" id="L103" title="1 of 2 branches missed.">        return normalised.isEmpty() ? null : normalised;</span>
+    }
+
+    List&lt;MatchScore&gt; score(List&lt;RequestedLine&gt; requested, List&lt;ExtractedItem&gt; quoted) {
+<span class="fc" id="L107">        List&lt;MatchRequestItem&gt; req = requested.stream()</span>
+<span class="fc" id="L108">                .map(r -&gt; new MatchRequestItem(r.id(), r.description(), r.specifications(), r.unitOfMeasure(), r.quantity()))</span>
+<span class="fc" id="L109">                .toList();</span>
+<span class="fc" id="L110">        List&lt;MatchQuotedItem&gt; quo = new ArrayList&lt;&gt;();</span>
+<span class="fc bfc" id="L111" title="All 2 branches covered.">        for (int i = 0; i &lt; quoted.size(); i++) {</span>
+<span class="fc" id="L112">            ExtractedItem q = quoted.get(i);</span>
+<span class="pc bpc" id="L113" title="1 of 2 branches missed.">            if (!isBlank(q.description())) {</span>
+<span class="fc" id="L114">                quo.add(new MatchQuotedItem(i, q.description(), q.unitOfMeasure().orElse(null), q.quantity().orElse(null)));</span>
+            }
+        }
+        try {
+<span class="fc" id="L118">            return documentClient.match(req, quo);</span>
+<span class="fc" id="L119">        } catch (QuotationProcessingException e) {</span>
+<span class="fc" id="L120">            log.warn(&quot;Python matcher unavailable, using local token similarity: {}&quot;, e.getMessage());</span>
+<span class="fc" id="L121">            return localScores(requested, quoted);</span>
+        }
+    }
+
+    static List&lt;MatchScore&gt; localScores(List&lt;RequestedLine&gt; requested, List&lt;ExtractedItem&gt; quoted) {
+<span class="fc" id="L126">        List&lt;MatchScore&gt; scores = new ArrayList&lt;&gt;();</span>
+<span class="fc bfc" id="L127" title="All 2 branches covered.">        for (int i = 0; i &lt; quoted.size(); i++) {</span>
+<span class="fc" id="L128">            String description = quoted.get(i).description();</span>
+<span class="pc bpc" id="L129" title="1 of 2 branches missed.">            if (isBlank(description)) {</span>
+<span class="nc" id="L130">                continue;</span>
+            }
+<span class="fc bfc" id="L132" title="All 2 branches covered.">            for (RequestedLine r : requested) {</span>
+<span class="pc bpc" id="L133" title="1 of 2 branches missed.">                String target = r.description() + (r.specifications() == null ? &quot;&quot; : &quot; &quot; + r.specifications());</span>
+<span class="fc" id="L134">                double s = Math.max(TextSimilarity.score(description, r.description()),</span>
+<span class="fc" id="L135">                        0.9 * TextSimilarity.score(description, target));</span>
+<span class="fc" id="L136">                scores.add(new MatchScore(i, r.id(), s));</span>
+            }
+        }
+<span class="fc" id="L139">        return scores;</span>
+    }
+
+    private static boolean isBlank(String s) {
+<span class="pc bpc" id="L143" title="1 of 4 branches missed.">        return s == null || s.isBlank();</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.13.202504020838</span></div></body></html>

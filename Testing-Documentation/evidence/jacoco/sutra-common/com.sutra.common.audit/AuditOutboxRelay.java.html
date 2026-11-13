@@ -1,0 +1,86 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>AuditOutboxRelay.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">SUTRA common</a> &gt; <a href="index.source.html" class="el_package">com.sutra.common.audit</a> &gt; <span class="el_source">AuditOutboxRelay.java</span></div><h1>AuditOutboxRelay.java</h1><pre class="source lang-java linenums">package com.sutra.common.audit;
+
+import com.sutra.common.client.InternalRestClients;
+import com.sutra.common.client.ServiceUrls;
+import java.time.Duration;
+import java.time.Instant;
+import java.util.List;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.scheduling.annotation.Scheduled;
+import org.springframework.stereotype.Component;
+import org.springframework.transaction.support.TransactionTemplate;
+import org.springframework.web.client.RestClient;
+import org.springframework.web.client.RestClientException;
+
+/**
+ * Delivers outbox events to the audit service, oldest first, and deletes them once accepted. Each batch is one
+ * request, so a failure stops the batch as a whole and nothing is delivered out of order. While the audit service
+ * is down the events wait in the outbox and the relay backs off exponentially (2 s, 4 s ... up to 60 s) instead of
+ * retrying every second. The audit service ignores events it already has, so a repeated delivery is harmless.
+ */
+@Component
+@ConditionalOnProperty(name = &quot;sutra.audit.outbox-relay&quot;, havingValue = &quot;true&quot;, matchIfMissing = true)
+public class AuditOutboxRelay {
+
+<span class="nc" id="L28">    private static final Logger log = LoggerFactory.getLogger(AuditOutboxRelay.class);</span>
+
+    private final AuditOutboxRepository outbox;
+    private final TransactionTemplate tx;
+    private final RestClient auditClient;
+    private final String serviceName;
+<span class="nc" id="L34">    private static final Duration MAX_BACKOFF = Duration.ofSeconds(60);</span>
+
+    private volatile boolean warned;
+    private int failures;
+<span class="nc" id="L38">    private Instant nextAttemptAt = Instant.EPOCH;</span>
+
+<span class="nc" id="L40">    public AuditOutboxRelay(AuditOutboxRepository outbox, TransactionTemplate tx, InternalRestClients clients,</span>
+                            ServiceUrls urls, @Value(&quot;${spring.application.name}&quot;) String serviceName) {
+<span class="nc" id="L42">        this.outbox = outbox;</span>
+<span class="nc" id="L43">        this.tx = tx;</span>
+<span class="nc" id="L44">        this.auditClient = clients.forBaseUrl(urls.audit());</span>
+<span class="nc" id="L45">        this.serviceName = serviceName;</span>
+<span class="nc" id="L46">    }</span>
+
+    @Scheduled(fixedDelayString = &quot;${sutra.audit.relay-interval-ms:1000}&quot;)
+    public void deliver() {
+<span class="nc bnc" id="L50" title="All 2 branches missed.">        if (Instant.now().isBefore(nextAttemptAt)) {</span>
+<span class="nc" id="L51">            return; // backing off after a failed delivery</span>
+        }
+<span class="nc" id="L53">        List&lt;AuditOutboxEvent&gt; batch = outbox.findTop100ByOrderByIdAsc();</span>
+<span class="nc bnc" id="L54" title="All 2 branches missed.">        if (batch.isEmpty()) {</span>
+<span class="nc" id="L55">            return;</span>
+        }
+        try {
+<span class="nc" id="L58">            auditClient.post().uri(&quot;/internal/audit-events&quot;)</span>
+<span class="nc" id="L59">                    .body(batch.stream().map(e -&gt; e.toMessage(serviceName)).toList())</span>
+<span class="nc" id="L60">                    .retrieve().toBodilessEntity();</span>
+<span class="nc" id="L61">            tx.executeWithoutResult(s -&gt; outbox.deleteAllByIdInBatch(batch.stream().map(AuditOutboxEvent::getId).toList()));</span>
+<span class="nc bnc" id="L62" title="All 2 branches missed.">            if (warned) {</span>
+<span class="nc" id="L63">                log.info(&quot;Audit service reachable again; delivering queued audit events&quot;);</span>
+<span class="nc" id="L64">                warned = false;</span>
+            }
+<span class="nc" id="L66">            failures = 0;</span>
+<span class="nc" id="L67">            nextAttemptAt = Instant.EPOCH;</span>
+<span class="nc" id="L68">        } catch (RestClientException e) {</span>
+<span class="nc" id="L69">            failures++;</span>
+<span class="nc" id="L70">            Duration wait = backoff(failures);</span>
+<span class="nc" id="L71">            nextAttemptAt = Instant.now().plus(wait);</span>
+<span class="nc bnc" id="L72" title="All 2 branches missed.">            if (!warned) {</span>
+<span class="nc" id="L73">                log.warn(&quot;Audit service unreachable ({} event(s) queued), retrying with back-off: {}&quot;, batch.size(),</span>
+<span class="nc" id="L74">                        e.getMessage());</span>
+<span class="nc" id="L75">                warned = true;</span>
+            }
+        }
+<span class="nc" id="L78">    }</span>
+
+    /** 2 s after the first failure, doubling each time, never more than a minute. */
+    static Duration backoff(int failures) {
+<span class="nc" id="L82">        long seconds = 1L &lt;&lt; Math.min(failures, 6);</span>
+<span class="nc" id="L83">        return Duration.ofSeconds(Math.min(seconds, MAX_BACKOFF.toSeconds()));</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.13.202504020838</span></div></body></html>

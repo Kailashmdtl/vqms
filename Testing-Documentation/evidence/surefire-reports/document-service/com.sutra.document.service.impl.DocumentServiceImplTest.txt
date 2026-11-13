@@ -1,0 +1,4 @@
+-------------------------------------------------------------------------------
+Test set: com.sutra.document.service.impl.DocumentServiceImplTest
+-------------------------------------------------------------------------------
+Tests run: 4, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 1.776 s -- in com.sutra.document.service.impl.DocumentServiceImplTest

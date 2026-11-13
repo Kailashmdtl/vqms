@@ -1,0 +1,52 @@
+GROUP,PACKAGE,CLASS,INSTRUCTION_MISSED,INSTRUCTION_COVERED,BRANCH_MISSED,BRANCH_COVERED,LINE_MISSED,LINE_COVERED,COMPLEXITY_MISSED,COMPLEXITY_COVERED,METHOD_MISSED,METHOD_COVERED
+SUTRA quotation service,com.sutra.quotation.controller,QuotationController,108,11,2,0,19,4,11,2,10,2
+SUTRA quotation service,com.sutra.quotation.controller,InternalQuotationController,147,25,7,0,21,8,16,3,12,3
+SUTRA quotation service,com.sutra.quotation.controller,RfqQuotationController,17,6,0,0,2,3,2,1,2,1
+SUTRA quotation service,com.sutra.quotation.controller,VendorPortalController,60,16,0,0,12,5,4,3,4,3
+SUTRA quotation service,com.sutra.quotation.mapper,VendorPortalMapper,48,16,2,4,5,1,4,2,2,1
+SUTRA quotation service,com.sutra.quotation.mapper,QuotationMapper,48,211,3,7,5,25,4,7,1,5
+SUTRA quotation service,com.sutra,QuotationServiceApplication,5,3,0,0,2,1,1,1,1,1
+SUTRA quotation service,com.sutra.quotation.service.impl,QuotationServiceImpl.IncomingFile,0,12,0,0,0,1,0,1,0,1
+SUTRA quotation service,com.sutra.quotation.service.impl,VendorPortalServiceImpl.new ResourceNotFoundException() {...},0,8,0,0,0,1,0,1,0,1
+SUTRA quotation service,com.sutra.quotation.service.impl,ExtractionResultServiceImpl,86,835,22,48,15,130,23,41,1,28
+SUTRA quotation service,com.sutra.quotation.service.impl,VendorPortalServiceImpl,217,463,24,40,26,80,28,29,9,16
+SUTRA quotation service,com.sutra.quotation.service.impl,QuotationServiceImpl,635,1228,37,49,81,215,46,57,15,45
+SUTRA quotation service,com.sutra.quotation.service.impl,QuotationServiceImpl.Editable,0,9,0,0,0,1,0,1,0,1
+SUTRA quotation service,com.sutra.quotation.service.internal,QuotationValidator,40,408,5,47,7,77,5,32,0,11
+SUTRA quotation service,com.sutra.quotation.service.internal,FlagDraft,0,45,0,0,0,4,0,4,0,4
+SUTRA quotation service,com.sutra.quotation.service.internal,AfterCommit.new TransactionSynchronization() {...},0,10,0,0,0,3,0,2,0,2
+SUTRA quotation service,com.sutra.quotation.service.internal,AfterCommit,0,11,0,2,0,5,0,2,0,1
+SUTRA quotation service,com.sutra.quotation.service.internal,TextSimilarity,5,207,5,9,2,15,5,8,0,6
+SUTRA quotation service,com.sutra.quotation.service.internal,QuotationReviewService,2,183,5,31,1,31,5,23,0,10
+SUTRA quotation service,com.sutra.quotation.service.internal,QuotationCalculator,53,501,22,56,9,108,20,27,0,8
+SUTRA quotation service,com.sutra.quotation.service.internal,RecordAccessPolicy,2,40,2,6,1,9,2,5,0,3
+SUTRA quotation service,com.sutra.quotation.service.internal,QuotationCalculator.LineAmounts,0,18,0,0,0,1,0,1,0,1
+SUTRA quotation service,com.sutra.quotation.service.internal,ReadingQueue,66,32,2,0,9,12,4,4,3,4
+SUTRA quotation service,com.sutra.quotation.entity.base,AuditableEntity,0,16,0,0,0,7,0,3,0,3
+SUTRA quotation service,com.sutra.quotation.entity.base,BaseEntity,0,3,0,0,0,1,0,1,0,1
+SUTRA quotation service,com.sutra.quotation.exception,QuotationNotFoundException,0,7,0,0,0,2,0,1,0,1
+SUTRA quotation service,com.sutra.quotation.exception,InvalidQuotationFileException,0,6,0,0,0,2,0,1,0,1
+SUTRA quotation service,com.sutra.quotation.entity,UserRef,23,30,4,0,3,9,5,5,3,5
+SUTRA quotation service,com.sutra.quotation.entity,Quotation,2,57,1,1,0,12,1,6,0,6
+SUTRA quotation service,com.sutra.quotation.entity,QuotationItem,0,3,0,0,0,1,0,1,0,1
+SUTRA quotation service,com.sutra.quotation.entity,NamedRef,13,36,2,2,2,9,4,5,2,5
+SUTRA quotation service,com.sutra.quotation.entity,QuotationFlag,10,32,1,1,2,11,2,2,1,2
+SUTRA quotation service,com.sutra.quotation.entity,QuotationFile,9,6,0,0,1,2,1,1,1,1
+SUTRA quotation service,com.sutra.quotation.client,DocumentStoreClient.Upload,0,9,0,0,0,1,0,1,0,1
+SUTRA quotation service,com.sutra.quotation.client,MasterDataClient.VendorSnapshot,0,15,0,0,0,1,0,1,0,1
+SUTRA quotation service,com.sutra.quotation.client,DocumentStoreClient.new ParameterizedTypeReference() {...},6,0,0,0,1,0,1,0,1,0
+SUTRA quotation service,com.sutra.quotation.client,DocumentStoreClient.new ByteArrayResource() {...},14,0,0,0,2,0,2,0,2,0
+SUTRA quotation service,com.sutra.quotation.client,DocumentStoreClient,170,4,2,0,23,2,12,1,11,1
+SUTRA quotation service,com.sutra.quotation.client,MasterDataClient,184,0,6,0,26,0,16,0,13,0
+SUTRA quotation service,com.sutra.quotation.client,MasterDataClient.SubEntitySnapshot,18,0,0,0,1,0,1,0,1,0
+SUTRA quotation service,com.sutra.quotation.client,MasterDataClient.CustomerSnapshot,18,0,0,0,1,0,1,0,1,0
+SUTRA quotation service,com.sutra.quotation.client,DecisionClient.new ParameterizedTypeReference() {...},6,0,0,0,1,0,1,0,1,0
+SUTRA quotation service,com.sutra.quotation.client,RfqClient,135,0,4,0,16,0,11,0,9,0
+SUTRA quotation service,com.sutra.quotation.client,DecisionClient,153,0,6,0,21,0,13,0,10,0
+SUTRA quotation service,com.sutra.quotation.client,RfqClient.new ParameterizedTypeReference() {...},6,0,0,0,1,0,1,0,1,0
+SUTRA quotation service,com.sutra.quotation.client,RfqClient.new ParameterizedTypeReference() {...},6,0,0,0,1,0,1,0,1,0
+SUTRA quotation service,com.sutra.quotation.client,MasterDataClient.EntitySnapshot,15,0,0,0,1,0,1,0,1,0
+SUTRA quotation service,com.sutra.quotation.client,MasterDataClient.Stats,12,0,0,0,1,0,1,0,1,0
+SUTRA quotation service,com.sutra.quotation.config,QuotationProperties,10,17,2,2,0,4,2,1,0,1
+SUTRA quotation service,com.sutra.quotation.config,QuotationAuditScope,5,25,3,2,3,6,3,3,0,3
+SUTRA quotation service,com.sutra.quotation.dto.response,DownloadedFile,21,0,0,0,2,0,2,0,2,0

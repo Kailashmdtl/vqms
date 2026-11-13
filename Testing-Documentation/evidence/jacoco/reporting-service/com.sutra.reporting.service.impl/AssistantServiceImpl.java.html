@@ -1,0 +1,567 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>AssistantServiceImpl.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">SUTRA reporting service</a> &gt; <a href="index.source.html" class="el_package">com.sutra.reporting.service.impl</a> &gt; <span class="el_source">AssistantServiceImpl.java</span></div><h1>AssistantServiceImpl.java</h1><pre class="source lang-java linenums"><span class="fc" id="L1">package com.sutra.reporting.service.impl;</span>
+
+import com.sutra.api.internal.InternalContracts.AiCompletionRequest;
+import com.sutra.api.internal.InternalContracts.AiCompletion;
+import com.sutra.api.internal.InternalContracts.AiStatus;
+import com.sutra.common.error.ServiceUnavailableException;
+import com.sutra.reporting.exception.AiServiceException;
+import com.sutra.reporting.service.internal.AiMessages;
+import com.sutra.reporting.client.PlatformClient;
+import com.sutra.reporting.service.DashboardService;
+import com.sutra.reporting.service.AssistantService;
+import com.sutra.common.error.ResourceNotFoundException;
+import com.sutra.common.security.CurrentUserProvider;
+import com.sutra.common.security.RoleName;
+import com.sutra.api.comparison.ComparisonResult;
+import com.sutra.api.enums.QuotationStatus;
+import com.sutra.reporting.dto.request.AssistantRequests.ChatRequest;
+import com.sutra.reporting.dto.request.AssistantRequests.ChatTurn;
+import com.sutra.reporting.dto.response.AssistantResponses.AssistantLink;
+import com.sutra.reporting.dto.response.AssistantResponses.AssistantStatus;
+import com.sutra.reporting.dto.response.AssistantResponses.ChatResponse;
+import com.sutra.api.decision.DecisionResponses.ComparisonReportResponse;
+import com.sutra.api.rfq.PurchaseRequestResponses.PurchaseRequestResponse;
+import com.sutra.api.rfq.PurchaseRequestResponses.PurchaseRequestSummary;
+import com.sutra.api.quotation.QuotationResponses.QuotationResponse;
+import com.sutra.api.quotation.QuotationResponses.QuotationSummary;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Service;
+import tools.jackson.core.JacksonException;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
+
+/**
+ * The read-only Hindi/English assistant (&quot;SUTRA Sahayak&quot;).
+ *
+ * &lt;p&gt;For each question it builds a compact JSON snapshot of the procurement data through the normal services (so
+ * the usual access checks apply), sends it to Groq with the conversation, and returns the answer. It never
+ * changes data: the services it calls are queries only. Totals in the snapshot are the backend's own figures, so the
+ * model quotes them rather than calculating. Questions and answers are not logged.&lt;/p&gt;
+ */
+@Service
+public class AssistantServiceImpl implements AssistantService {
+
+    /** Purchase requests in the overview, newest first. */
+    static final int OVERVIEW_REQUESTS = 30;
+    /** Of those, how many also list their quotations. */
+    static final int OVERVIEW_WITH_QUOTATIONS = 15;
+    /** Earlier turns sent to the model. */
+    static final int HISTORY_TURNS = 12;
+    /** Earlier turns are cut to this length (a pasted RFQ need not be resent with every question). */
+    static final int TURN_CHARS = 1500;
+    static final int MAX_OUTPUT_TOKENS = 4096;
+
+<span class="fc" id="L63">    private static final Pattern REQUEST_NUMBER = Pattern.compile(&quot;(?i)\\bPR-\\d{4}-\\d{1,6}\\b&quot;);</span>
+<span class="fc" id="L64">    private static final Pattern QUOTATION_ID = Pattern.compile(</span>
+<span class="fc" id="L65">            &quot;(?iu)(?:quotation|quote|qtn|कोटेशन|कोटेशन)\\s*(?:no\\.?|number|id|#|नंबर|संख्या)?\\s*#?\\s*(\\d{1,9})&quot;);</span>
+<span class="fc" id="L66">    private static final Logger log = LoggerFactory.getLogger(AssistantServiceImpl.class);</span>
+
+    static final String SYSTEM_PROMPT = &quot;&quot;&quot;
+            You are &quot;SUTRA Sahayak&quot;, the assistant inside SUTRA, a vendor quotation management system.
+            Users are procurement staff in India. You help them understand purchase requests (RFQs), vendor
+            quotations, extraction flags, quality grades and vendor comparisons.
+
+            LANGUAGE
+            - Reply in the same language AND script as the user's latest message:
+              * Devanagari (e.g. &quot;किन कोटेशन को रिव्यू चाहिए?&quot;) -&gt; reply in Hindi, Devanagari script.
+              * Hinglish, i.e. Hindi words in Latin letters (e.g. &quot;sabse sasta kaun hai?&quot;) -&gt; reply in Hinglish,
+                Latin letters only. Do NOT switch to Devanagari.
+              * English -&gt; reply in English.
+            - Keep record numbers, vendor names, item codes and amounts exactly as in the data.
+            - Statuses in DATA are already the app's labels (e.g. &quot;Ready for comparison&quot;, &quot;Awarded&quot;). Use them as
+              written; in Hindi you may add a short Hindi explanation, but never invent a status code.
+
+            RULES
+            - You are READ-ONLY. You cannot create, upload, edit, approve, reject or delete anything yourself. When the
+              user asks you to do something, say you cannot do it from chat and tell them exactly where in SUTRA to do
+              it using the SCREENS below. Only managers (APPROVER) and administrators record awards.
+            - RFQ DRAFTS: when the user's latest message contains an RFQ, indent or list of items to buy (e.g. pasted
+              from an e-mail), or asks you to create an RFQ from text they wrote, set &quot;action&quot; to &quot;DRAFT_RFQ&quot;. SUTRA
+              then reads it into a draft card below your reply, and the user checks it and clicks &quot;Create RFQ&quot;. Your
+              reply is then one or two sentences saying the draft is ready to check; never say it was created or
+              saved, and do not list the items yourself. Otherwise &quot;action&quot; is &quot;NONE&quot;.
+            - Use ONLY the DATA below. Never invent records, amounts, vendors or dates. If the data does not contain
+              the answer, say so and suggest where to look. The overview lists only the most recent requests.
+            - Every amount in DATA was calculated by the backend and is already formatted (e.g. &quot;₹17,78,260.00&quot;).
+              Copy amounts exactly as written; never recalculate, add up, convert or reformat them.
+            - Prices are only comparable WITHIN one purchase request (the same RFQ). Never compare or rank quotations
+              from different purchase requests; when the user does not say which request, answer per request.
+            - You may say which complete quotation is lowest and repeat the advisory vendor grade, but the decision
+              belongs to an authorised approver. Never say a vendor is approved unless DATA shows an approval.
+            - Status meanings: Uploaded = waiting; Processing = being read; Needs review = a person must check flags;
+              Ready for comparison = reviewed; Failed = could not be read (retry with another engine or enter by hand).
+              Requests: Draft, Open (taking quotations), Comparing (compared, awaiting award), Awarded, Rejected.
+            - Be concise: short paragraphs or bullet lists, at most about 180 words unless the user asks for detail.
+            - In &quot;links&quot;, list the purchase requests and quotations your answer is about (id from DATA), at most 6.
+              Do not write a list of links inside &quot;reply&quot;; the app shows them as buttons.
+
+            SCREENS (use these exact names when telling the user where to go)
+            - Sidebar: Dashboard, RFQs, Vendors, Award register, Audit log.
+            - RFQs &gt; open a request &gt; tabs: &quot;Requested items&quot;, &quot;Quotations&quot; (upload a quotation for a vendor; open a
+              quotation), &quot;Comparison&quot; (generate a comparison once quotations are ready), &quot;Award&quot; (a manager records
+              the award or rejection, with a reason), &quot;History&quot;.
+            - Quotation page: &quot;Re-run extraction&quot; (choose engine), &quot;Cross-check extraction engines&quot;, edit lines or
+              &quot;Add line&quot;, &quot;Accept&quot; each flag after checking it, then &quot;Mark ready&quot;.
+            &quot;&quot;&quot;;
+
+    private final PlatformClient platform;
+    private final DashboardService dashboardService;
+    private final CurrentUserProvider currentUser;
+    private final ObjectMapper objectMapper;
+
+<span class="fc" id="L121">    public AssistantServiceImpl(PlatformClient platform, DashboardService dashboardService,</span>
+                                CurrentUserProvider currentUser, ObjectMapper objectMapper) {
+<span class="fc" id="L123">        this.platform = platform;</span>
+<span class="fc" id="L124">        this.dashboardService = dashboardService;</span>
+<span class="fc" id="L125">        this.currentUser = currentUser;</span>
+<span class="fc" id="L126">        this.objectMapper = objectMapper;</span>
+<span class="fc" id="L127">    }</span>
+
+    public AssistantStatus status() {
+<span class="fc" id="L130">        AiStatus ai = aiStatus();</span>
+<span class="pc bpc" id="L131" title="1 of 2 branches missed.">        return ai.groqConfigured()</span>
+<span class="nc" id="L132">                ? new AssistantStatus(true, ai.groqModel(), null)</span>
+<span class="fc" id="L133">                : new AssistantStatus(false, null, &quot;The assistant needs Groq: set the GROQ_API_KEY environment &quot;</span>
+                        + &quot;variable for the backend and restart it.&quot;);
+    }
+
+    public ChatResponse chat(ChatRequest request) {
+<span class="fc bfc" id="L138" title="All 2 branches covered.">        if (!aiStatus().groqConfigured()) {</span>
+<span class="fc" id="L139">            throw new AiServiceException(status().reason());</span>
+        }
+<span class="fc" id="L141">        Context context = buildContext(request);</span>
+<span class="fc" id="L142">        List&lt;Map&lt;String, Object&gt;&gt; messages = List.of(</span>
+<span class="fc" id="L143">                AiMessages.message(&quot;system&quot;, SYSTEM_PROMPT</span>
+<span class="fc" id="L144">                        + &quot;\nDATA (JSON, current as of this question):\n&quot; + toJson(context.data)),</span>
+<span class="fc" id="L145">                AiMessages.message(&quot;user&quot;, conversation(request)));</span>
+<span class="fc" id="L146">        AiCompletion answer = platform.complete(new AiCompletionRequest(messages, responseFormat(), MAX_OUTPUT_TOKENS));</span>
+<span class="fc" id="L147">        log.info(&quot;Assistant answered for user {} (model {}, input {} tokens, output {} tokens)&quot;, currentUser.username(),</span>
+<span class="fc" id="L148">                answer.model(), answer.inputTokens(), answer.outputTokens());</span>
+<span class="fc" id="L149">        ChatResponse response = readAnswer(answer.content(), context);</span>
+<span class="fc bfc" id="L150" title="All 2 branches covered.">        return wantsRfqDraft(answer.content()) ? withRfqDraft(response, request.message()) : response;</span>
+    }
+
+    /** True when the model marked the message as an RFQ to draft. */
+    boolean wantsRfqDraft(String text) {
+        try {
+<span class="fc" id="L156">            return &quot;DRAFT_RFQ&quot;.equals(objectMapper.readTree(text).path(&quot;action&quot;).asString(&quot;&quot;));</span>
+<span class="fc" id="L157">        } catch (JacksonException | IllegalArgumentException e) {</span>
+<span class="fc" id="L158">            return false;</span>
+        }
+    }
+
+    /**
+     * Reads the pasted RFQ into a draft card. Only buyers and administrators create RFQs; the draft is never saved
+     * here - the user confirms it in the app.
+     */
+    ChatResponse withRfqDraft(ChatResponse response, String message) {
+<span class="pc bpc" id="L167" title="1 of 4 branches missed.">        if (!currentUser.hasRole(RoleName.ADMIN) &amp;&amp; !currentUser.hasRole(RoleName.PROCUREMENT)) {</span>
+<span class="fc" id="L168">            return new ChatResponse(response.reply() + &quot;\n\nOnly buyers and administrators can create RFQs.&quot;,</span>
+<span class="fc" id="L169">                    response.links());</span>
+        }
+        try {
+<span class="fc" id="L172">            return new ChatResponse(response.reply(), response.links(), platform.rfqDraftFromText(message));</span>
+<span class="nc" id="L173">        } catch (RuntimeException e) {</span>
+<span class="nc" id="L174">            log.warn(&quot;RFQ draft from chat failed: {}&quot;, e.getMessage());</span>
+<span class="nc" id="L175">            return new ChatResponse(response.reply() + &quot;\n\nI could not read it as an RFQ (&quot; + e.getMessage()</span>
+<span class="nc" id="L176">                    + &quot;). Try again, or drop the RFQ file on RFQs &gt; New RFQ.&quot;, response.links());</span>
+        }
+    }
+
+    // ---------- context ----------
+
+    /** What the model may see, plus the records it may link to. */
+    record Context(Map&lt;String, Object&gt; data, Map&lt;Long, String&gt; requests, Map&lt;Long, String&gt; quotations) {
+    }
+
+    Context buildContext(ChatRequest request) {
+<span class="fc" id="L187">        Map&lt;String, Object&gt; data = new LinkedHashMap&lt;&gt;();</span>
+<span class="fc" id="L188">        Map&lt;Long, String&gt; requestLabels = new LinkedHashMap&lt;&gt;();</span>
+<span class="fc" id="L189">        Map&lt;Long, String&gt; quotationLabels = new LinkedHashMap&lt;&gt;();</span>
+
+<span class="fc" id="L191">        data.put(&quot;user&quot;, Map.of(&quot;username&quot;, currentUser.username()));</span>
+<span class="fc" id="L192">        var dashboard = dashboardService.summary();</span>
+<span class="fc" id="L193">        Map&lt;String, Object&gt; totals = new LinkedHashMap&lt;&gt;();</span>
+<span class="fc" id="L194">        totals.put(&quot;purchaseRequestsByStatus&quot;, labelled(dashboard.purchaseRequestsByStatus()));</span>
+<span class="fc" id="L195">        totals.put(&quot;quotationsByStatus&quot;, labelled(dashboard.quotationsByStatus()));</span>
+<span class="pc bpc" id="L196" title="1 of 2 branches missed.">        totals.put(&quot;vendors&quot;, dashboard.vendors() == null ? &quot;unknown (master data service unavailable)&quot; : dashboard.vendors());</span>
+<span class="fc" id="L197">        data.put(&quot;totals&quot;, totals);</span>
+
+<span class="fc" id="L199">        List&lt;PurchaseRequestSummary&gt; recent = platform.searchRfqs(null, null, 0, OVERVIEW_REQUESTS).content();</span>
+<span class="fc" id="L200">        List&lt;Map&lt;String, Object&gt;&gt; overview = new ArrayList&lt;&gt;();</span>
+<span class="fc" id="L201">        List&lt;Map&lt;String, Object&gt;&gt; attention = new ArrayList&lt;&gt;();</span>
+<span class="fc bfc" id="L202" title="All 2 branches covered.">        for (int i = 0; i &lt; recent.size(); i++) {</span>
+<span class="fc" id="L203">            PurchaseRequestSummary pr = recent.get(i);</span>
+<span class="fc" id="L204">            requestLabels.put(pr.id(), pr.requestNumber());</span>
+<span class="fc" id="L205">            Map&lt;String, Object&gt; row = new LinkedHashMap&lt;&gt;();</span>
+<span class="fc" id="L206">            row.put(&quot;id&quot;, pr.id());</span>
+<span class="fc" id="L207">            row.put(&quot;requestNumber&quot;, pr.requestNumber());</span>
+<span class="fc" id="L208">            row.put(&quot;title&quot;, pr.title());</span>
+<span class="fc" id="L209">            row.put(&quot;status&quot;, label(pr.status()));</span>
+<span class="fc" id="L210">            row.put(&quot;entity&quot;, pr.entityName());</span>
+<span class="fc" id="L211">            row.put(&quot;requestedBy&quot;, pr.requestedBy());</span>
+<span class="fc" id="L212">            row.put(&quot;currency&quot;, pr.currency());</span>
+<span class="fc" id="L213">            row.put(&quot;requiredBy&quot;, pr.requiredBy());</span>
+<span class="fc" id="L214">            row.put(&quot;itemCount&quot;, pr.itemCount());</span>
+<span class="pc bpc" id="L215" title="1 of 2 branches missed.">            if (i &lt; OVERVIEW_WITH_QUOTATIONS) {</span>
+<span class="fc" id="L216">                List&lt;QuotationSummary&gt; quotes = platform.quotationSummaries(pr.id());</span>
+<span class="fc" id="L217">                row.put(&quot;quotations&quot;, quotes.stream().map(q -&gt; quotationRow(q, quotationLabels)).toList());</span>
+<span class="fc" id="L218">                quotes.stream()</span>
+<span class="pc bpc" id="L219" title="1 of 4 branches missed.">                        .filter(q -&gt; q.status() == QuotationStatus.NEEDS_REVIEW || q.status() == QuotationStatus.FAILED)</span>
+<span class="fc" id="L220">                        .forEach(q -&gt; attention.add(Map.of(&quot;quotationId&quot;, q.id(), &quot;requestNumber&quot;, q.requestNumber(),</span>
+<span class="fc" id="L221">                                &quot;vendor&quot;, q.vendorName(), &quot;status&quot;, label(q.status()), &quot;openFlags&quot;, q.openFlags())));</span>
+            }
+<span class="fc" id="L223">            overview.add(row);</span>
+        }
+<span class="fc" id="L225">        data.put(&quot;recentPurchaseRequests&quot;, overview);</span>
+<span class="fc" id="L226">        data.put(&quot;quotationsNeedingAttention&quot;, attention);</span>
+
+<span class="fc bfc" id="L228" title="All 2 branches covered.">        for (Long prId : focusRequests(request, recent)) {</span>
+            try {
+<span class="fc" id="L230">                data.computeIfAbsent(&quot;focusPurchaseRequests&quot;, k -&gt; new ArrayList&lt;Object&gt;());</span>
+                @SuppressWarnings(&quot;unchecked&quot;)
+<span class="fc" id="L232">                List&lt;Object&gt; focus = (List&lt;Object&gt;) data.get(&quot;focusPurchaseRequests&quot;);</span>
+<span class="fc" id="L233">                focus.add(requestDetail(prId, requestLabels, quotationLabels));</span>
+<span class="pc" id="L234">            } catch (ResourceNotFoundException e) {</span>
+                // the page's record was deleted meanwhile, or the number does not exist: the model says so
+            }
+        }
+<span class="pc bpc" id="L238" title="1 of 2 branches missed.">        for (Long quotationId : focusQuotations(request)) {</span>
+            try {
+<span class="nc" id="L240">                data.computeIfAbsent(&quot;focusQuotations&quot;, k -&gt; new ArrayList&lt;Object&gt;());</span>
+                @SuppressWarnings(&quot;unchecked&quot;)
+<span class="nc" id="L242">                List&lt;Object&gt; focus = (List&lt;Object&gt;) data.get(&quot;focusQuotations&quot;);</span>
+<span class="nc" id="L243">                focus.add(quotationDetail(platform.quotation(quotationId), quotationLabels));</span>
+<span class="nc" id="L244">            } catch (ResourceNotFoundException e) {</span>
+                // as above
+            }
+        }
+<span class="pc bpc" id="L248" title="2 of 4 branches missed.">        if (request.purchaseRequestId() != null || request.quotationId() != null) {</span>
+<span class="nc bnc" id="L249" title="All 2 branches missed.">            data.put(&quot;userIsViewing&quot;, request.quotationId() != null</span>
+<span class="nc" id="L250">                    ? &quot;quotation id &quot; + request.quotationId() : &quot;purchase request id &quot; + request.purchaseRequestId());</span>
+        }
+<span class="fc" id="L252">        return new Context(data, requestLabels, quotationLabels);</span>
+    }
+
+    /** The page's request plus any request numbers in the message (at most three). */
+    Set&lt;Long&gt; focusRequests(ChatRequest request, List&lt;PurchaseRequestSummary&gt; recent) {
+<span class="fc" id="L257">        Set&lt;Long&gt; ids = new LinkedHashSet&lt;&gt;();</span>
+<span class="pc bpc" id="L258" title="1 of 2 branches missed.">        if (request.purchaseRequestId() != null) {</span>
+<span class="nc" id="L259">            ids.add(request.purchaseRequestId());</span>
+        }
+<span class="fc" id="L261">        Matcher m = REQUEST_NUMBER.matcher(request.message());</span>
+<span class="pc bpc" id="L262" title="1 of 4 branches missed.">        while (m.find() &amp;&amp; ids.size() &lt; 3) {</span>
+<span class="fc" id="L263">            String number = m.group().toUpperCase();</span>
+<span class="fc" id="L264">            recent.stream().filter(p -&gt; p.requestNumber().equalsIgnoreCase(number)).findFirst()</span>
+<span class="pc" id="L265">                    .or(() -&gt; platform.searchRfqs(number, null, 0, 1).content().stream()</span>
+<span class="nc" id="L266">                            .filter(p -&gt; p.requestNumber().equalsIgnoreCase(number)).findFirst())</span>
+<span class="fc" id="L267">                    .ifPresent(p -&gt; ids.add(p.id()));</span>
+        }
+<span class="fc" id="L269">        return ids;</span>
+    }
+
+    /** The page's quotation plus quotation ids named in the message (at most three). */
+    Set&lt;Long&gt; focusQuotations(ChatRequest request) {
+<span class="fc" id="L274">        Set&lt;Long&gt; ids = new LinkedHashSet&lt;&gt;();</span>
+<span class="fc bfc" id="L275" title="All 2 branches covered.">        if (request.quotationId() != null) {</span>
+<span class="fc" id="L276">            ids.add(request.quotationId());</span>
+        }
+<span class="fc" id="L278">        Matcher m = QUOTATION_ID.matcher(request.message());</span>
+<span class="pc bpc" id="L279" title="1 of 4 branches missed.">        while (m.find() &amp;&amp; ids.size() &lt; 3) {</span>
+<span class="fc" id="L280">            ids.add(Long.parseLong(m.group(1)));</span>
+        }
+<span class="fc" id="L282">        return ids;</span>
+    }
+
+    private Map&lt;String, Object&gt; quotationRow(QuotationSummary q, Map&lt;Long, String&gt; labels) {
+<span class="fc" id="L286">        labels.put(q.id(), q.vendorName() + &quot; · &quot; + q.requestNumber());</span>
+<span class="fc" id="L287">        Map&lt;String, Object&gt; row = new LinkedHashMap&lt;&gt;();</span>
+<span class="fc" id="L288">        row.put(&quot;id&quot;, q.id());</span>
+<span class="fc" id="L289">        row.put(&quot;vendor&quot;, q.vendorName());</span>
+<span class="fc" id="L290">        row.put(&quot;quotationNumber&quot;, q.quotationNumber());</span>
+<span class="fc" id="L291">        row.put(&quot;status&quot;, label(q.status()));</span>
+<span class="fc" id="L292">        row.put(&quot;currency&quot;, q.currency());</span>
+<span class="fc" id="L293">        row.put(&quot;grandTotal&quot;, money(q.grandTotal(), q.currency()));</span>
+<span class="fc" id="L294">        row.put(&quot;validUntil&quot;, q.validUntil());</span>
+<span class="fc" id="L295">        row.put(&quot;openFlags&quot;, q.openFlags());</span>
+<span class="fc" id="L296">        row.put(&quot;itemCount&quot;, q.itemCount());</span>
+<span class="fc" id="L297">        row.put(&quot;extractedBy&quot;, q.extractionSource());</span>
+<span class="pc bpc" id="L298" title="1 of 2 branches missed.">        if (q.failureReason() != null) {</span>
+<span class="nc" id="L299">            row.put(&quot;failureReason&quot;, q.failureReason());</span>
+        }
+<span class="fc" id="L301">        return row;</span>
+    }
+
+    private Map&lt;String, Object&gt; requestDetail(Long id, Map&lt;Long, String&gt; requestLabels, Map&lt;Long, String&gt; quotationLabels) {
+<span class="fc" id="L305">        PurchaseRequestResponse pr = platform.rfq(id);</span>
+<span class="fc" id="L306">        requestLabels.put(pr.id(), pr.requestNumber());</span>
+<span class="fc" id="L307">        Map&lt;String, Object&gt; d = new LinkedHashMap&lt;&gt;();</span>
+<span class="fc" id="L308">        d.put(&quot;id&quot;, pr.id());</span>
+<span class="fc" id="L309">        d.put(&quot;requestNumber&quot;, pr.requestNumber());</span>
+<span class="fc" id="L310">        d.put(&quot;title&quot;, pr.title());</span>
+<span class="fc" id="L311">        d.put(&quot;description&quot;, pr.description());</span>
+<span class="fc" id="L312">        d.put(&quot;status&quot;, label(pr.status()));</span>
+<span class="fc" id="L313">        d.put(&quot;entity&quot;, pr.entityName());</span>
+<span class="fc" id="L314">        d.put(&quot;subEntity&quot;, pr.subEntityName());</span>
+<span class="fc" id="L315">        d.put(&quot;customer&quot;, pr.customerName());</span>
+<span class="fc" id="L316">        d.put(&quot;requestedBy&quot;, pr.requestedBy());</span>
+<span class="fc" id="L317">        d.put(&quot;currency&quot;, pr.currency());</span>
+<span class="fc" id="L318">        d.put(&quot;requiredBy&quot;, pr.requiredBy());</span>
+<span class="fc" id="L319">        d.put(&quot;items&quot;, pr.items().stream().map(i -&gt; {</span>
+<span class="nc" id="L320">            Map&lt;String, Object&gt; item = new LinkedHashMap&lt;&gt;();</span>
+<span class="nc" id="L321">            item.put(&quot;line&quot;, i.lineNumber());</span>
+<span class="nc" id="L322">            item.put(&quot;itemCode&quot;, i.itemCode());</span>
+<span class="nc" id="L323">            item.put(&quot;description&quot;, i.description());</span>
+<span class="nc" id="L324">            item.put(&quot;quantity&quot;, i.quantity());</span>
+<span class="nc" id="L325">            item.put(&quot;unit&quot;, i.unitOfMeasure());</span>
+<span class="nc" id="L326">            item.put(&quot;specifications&quot;, i.specifications());</span>
+<span class="nc" id="L327">            return item;</span>
+<span class="fc" id="L328">        }).toList());</span>
+<span class="fc" id="L329">        d.put(&quot;quotations&quot;, platform.quotationSummaries(id).stream()</span>
+<span class="fc" id="L330">                .map(q -&gt; quotationRow(q, quotationLabels)).toList());</span>
+<span class="fc" id="L331">        List&lt;ComparisonReportResponse&gt; reports = platform.comparisons(id);</span>
+<span class="pc bpc" id="L332" title="1 of 2 branches missed.">        if (!reports.isEmpty()) {</span>
+<span class="nc" id="L333">            d.put(&quot;latestComparison&quot;, comparisonSummary(reports.get(0)));</span>
+        }
+<span class="fc" id="L335">        return d;</span>
+    }
+
+    private Map&lt;String, Object&gt; comparisonSummary(ComparisonReportResponse report) {
+<span class="nc" id="L339">        ComparisonResult result = report.result();</span>
+<span class="nc" id="L340">        Map&lt;String, Object&gt; c = new LinkedHashMap&lt;&gt;();</span>
+<span class="nc" id="L341">        c.put(&quot;version&quot;, report.reportVersion());</span>
+<span class="nc" id="L342">        c.put(&quot;generatedBy&quot;, report.generatedBy());</span>
+<span class="nc" id="L343">        c.put(&quot;generatedAt&quot;, report.generatedAt());</span>
+<span class="nc" id="L344">        c.put(&quot;lowestCompleteQuotationId&quot;, report.lowestCompleteQuotationId());</span>
+<span class="nc" id="L345">        c.put(&quot;warnings&quot;, result.warnings());</span>
+<span class="nc" id="L346">        c.put(&quot;vendors&quot;, result.quotations().stream().map(col -&gt; {</span>
+<span class="nc" id="L347">            Map&lt;String, Object&gt; v = new LinkedHashMap&lt;&gt;();</span>
+<span class="nc" id="L348">            v.put(&quot;quotationId&quot;, col.quotationId());</span>
+<span class="nc" id="L349">            v.put(&quot;vendor&quot;, col.vendorName());</span>
+<span class="nc" id="L350">            v.put(&quot;priceRank&quot;, col.priceRank());</span>
+<span class="nc" id="L351">            v.put(&quot;comparableTotal&quot;, money(col.comparableTotal(), col.currency()));</span>
+<span class="nc" id="L352">            v.put(&quot;grandTotal&quot;, money(col.grandTotal(), col.currency()));</span>
+<span class="nc" id="L353">            v.put(&quot;currency&quot;, col.currency());</span>
+<span class="nc" id="L354">            v.put(&quot;differenceFromLowest&quot;, money(col.differenceFromLowest(), col.currency()));</span>
+<span class="nc" id="L355">            v.put(&quot;differencePercent&quot;, col.differencePercent());</span>
+<span class="nc" id="L356">            v.put(&quot;deliveryTerms&quot;, col.deliveryTerms());</span>
+<span class="nc" id="L357">            v.put(&quot;paymentTerms&quot;, col.paymentTerms());</span>
+<span class="nc" id="L358">            v.put(&quot;warrantyTerms&quot;, col.warrantyTerms());</span>
+<span class="nc" id="L359">            v.put(&quot;validUntil&quot;, col.validUntil());</span>
+<span class="nc" id="L360">            v.put(&quot;missingInformation&quot;, col.missingInformation());</span>
+<span class="nc bnc" id="L361" title="All 2 branches missed.">            v.put(&quot;advisoryGrade&quot;, col.grade() == null ? null : col.grade().grade() + &quot; (&quot; + col.grade().score() + &quot;/100)&quot;);</span>
+<span class="nc" id="L362">            return v;</span>
+<span class="nc" id="L363">        }).toList());</span>
+<span class="nc" id="L364">        c.put(&quot;unmatchedItems&quot;, result.unmatchedItems().size());</span>
+<span class="nc" id="L365">        return c;</span>
+    }
+
+    private Map&lt;String, Object&gt; quotationDetail(QuotationResponse q, Map&lt;Long, String&gt; labels) {
+<span class="nc" id="L369">        labels.put(q.id(), q.vendorName() + &quot; · &quot; + q.requestNumber());</span>
+<span class="nc" id="L370">        Map&lt;String, Object&gt; d = new LinkedHashMap&lt;&gt;();</span>
+<span class="nc" id="L371">        d.put(&quot;id&quot;, q.id());</span>
+<span class="nc" id="L372">        d.put(&quot;purchaseRequestId&quot;, q.purchaseRequestId());</span>
+<span class="nc" id="L373">        d.put(&quot;requestNumber&quot;, q.requestNumber());</span>
+<span class="nc" id="L374">        d.put(&quot;vendor&quot;, q.vendorName());</span>
+<span class="nc" id="L375">        d.put(&quot;quotationNumber&quot;, q.quotationNumber());</span>
+<span class="nc" id="L376">        d.put(&quot;quotationDate&quot;, q.quotationDate());</span>
+<span class="nc" id="L377">        d.put(&quot;validUntil&quot;, q.validUntil());</span>
+<span class="nc" id="L378">        d.put(&quot;status&quot;, label(q.status()));</span>
+<span class="nc" id="L379">        d.put(&quot;currency&quot;, q.currency());</span>
+<span class="nc" id="L380">        d.put(&quot;calculated&quot;, Map.of(&quot;subtotal&quot;, nz(money(q.subtotal(), q.currency())),</span>
+<span class="nc" id="L381">                &quot;discount&quot;, nz(money(q.discountTotal(), q.currency())), &quot;tax&quot;, nz(money(q.taxTotal(), q.currency())),</span>
+<span class="nc" id="L382">                &quot;grandTotal&quot;, nz(money(q.grandTotal(), q.currency()))));</span>
+<span class="nc" id="L383">        Map&lt;String, Object&gt; printed = new LinkedHashMap&lt;&gt;();</span>
+<span class="nc" id="L384">        printed.put(&quot;subtotal&quot;, money(q.statedSubtotal(), q.currency()));</span>
+<span class="nc" id="L385">        printed.put(&quot;tax&quot;, money(q.statedTaxTotal(), q.currency()));</span>
+<span class="nc" id="L386">        printed.put(&quot;grandTotal&quot;, money(q.statedGrandTotal(), q.currency()));</span>
+<span class="nc" id="L387">        d.put(&quot;printedOnDocument&quot;, printed);</span>
+<span class="nc" id="L388">        d.put(&quot;deliveryTerms&quot;, q.deliveryTerms());</span>
+<span class="nc" id="L389">        d.put(&quot;paymentTerms&quot;, q.paymentTerms());</span>
+<span class="nc" id="L390">        d.put(&quot;warrantyTerms&quot;, q.warrantyTerms());</span>
+<span class="nc" id="L391">        d.put(&quot;extractedBy&quot;, q.extractionSource());</span>
+<span class="nc" id="L392">        d.put(&quot;failureReason&quot;, q.failureReason());</span>
+<span class="nc" id="L393">        d.put(&quot;files&quot;, q.files().stream().map(f -&gt; f.fileName()).toList());</span>
+<span class="nc" id="L394">        d.put(&quot;items&quot;, q.items().stream().map(i -&gt; {</span>
+<span class="nc" id="L395">            Map&lt;String, Object&gt; item = new LinkedHashMap&lt;&gt;();</span>
+<span class="nc" id="L396">            item.put(&quot;line&quot;, i.lineNumber());</span>
+<span class="nc" id="L397">            item.put(&quot;matchesRequestLine&quot;, i.requestItemLineNumber());</span>
+<span class="nc" id="L398">            item.put(&quot;itemCode&quot;, i.itemCode());</span>
+<span class="nc" id="L399">            item.put(&quot;description&quot;, i.description());</span>
+<span class="nc" id="L400">            item.put(&quot;quantity&quot;, i.quantity());</span>
+<span class="nc" id="L401">            item.put(&quot;unit&quot;, i.unitOfMeasure());</span>
+<span class="nc" id="L402">            item.put(&quot;unitPrice&quot;, money(i.unitPrice(), q.currency()));</span>
+<span class="nc" id="L403">            item.put(&quot;lineTotal&quot;, money(i.lineTotal(), q.currency()));</span>
+<span class="nc" id="L404">            item.put(&quot;printedLineTotal&quot;, money(i.statedLineTotal(), q.currency()));</span>
+<span class="nc" id="L405">            return item;</span>
+<span class="nc" id="L406">        }).toList());</span>
+<span class="nc bnc" id="L407" title="All 2 branches missed.">        d.put(&quot;openFlags&quot;, q.flags().stream().filter(f -&gt; !f.resolved())</span>
+<span class="nc" id="L408">                .map(f -&gt; f.severity() + &quot; &quot; + f.code() + &quot;: &quot; + f.message()).toList());</span>
+<span class="nc" id="L409">        d.put(&quot;resolvedFlags&quot;, q.flags().stream().filter(f -&gt; f.resolved()).count());</span>
+<span class="nc" id="L410">        return d;</span>
+    }
+
+    /**
+     * An amount ready to quote: &quot;₹17,78,260.00&quot; for INR (Indian digit grouping), &quot;USD 1,234.50&quot; otherwise.
+     * Formatting here means the model copies figures instead of reformatting (and possibly changing) them.
+     */
+    static String money(java.math.BigDecimal value, String currency) {
+<span class="fc bfc" id="L418" title="All 2 branches covered.">        if (value == null) {</span>
+<span class="fc" id="L419">            return null;</span>
+        }
+<span class="fc" id="L421">        java.math.BigDecimal v = value.setScale(2, java.math.RoundingMode.HALF_UP);</span>
+<span class="fc bfc" id="L422" title="All 2 branches covered.">        String sign = v.signum() &lt; 0 ? &quot;-&quot; : &quot;&quot;;</span>
+<span class="fc" id="L423">        String plain = v.abs().toPlainString();</span>
+<span class="fc" id="L424">        String whole = plain.substring(0, plain.indexOf('.'));</span>
+<span class="fc" id="L425">        String fraction = plain.substring(plain.indexOf('.'));</span>
+<span class="pc bpc" id="L426" title="1 of 4 branches missed.">        boolean inr = currency == null || &quot;INR&quot;.equalsIgnoreCase(currency);</span>
+<span class="fc" id="L427">        StringBuilder grouped = new StringBuilder();</span>
+<span class="fc" id="L428">        int n = whole.length();</span>
+<span class="fc bfc" id="L429" title="All 2 branches covered.">        for (int i = 0; i &lt; n; i++) {</span>
+<span class="fc" id="L430">            int fromEnd = n - i;</span>
+<span class="fc" id="L431">            grouped.append(whole.charAt(i));</span>
+<span class="fc bfc" id="L432" title="All 6 branches covered.">            boolean boundary = inr ? fromEnd &gt;= 4 &amp;&amp; (fromEnd - 4) % 2 == 0</span>
+<span class="fc bfc" id="L433" title="All 4 branches covered.">                    : fromEnd &gt; 1 &amp;&amp; (fromEnd - 1) % 3 == 0;</span>
+<span class="pc bpc" id="L434" title="1 of 4 branches missed.">            if (boundary &amp;&amp; i &lt; n - 1) {</span>
+<span class="fc" id="L435">                grouped.append(',');</span>
+            }
+        }
+<span class="fc bfc" id="L438" title="All 2 branches covered.">        return sign + (inr ? &quot;₹&quot; : currency.toUpperCase() + &quot; &quot;) + grouped + fraction;</span>
+    }
+
+    private static Object nz(Object value) {
+<span class="nc bnc" id="L442" title="All 2 branches missed.">        return value == null ? &quot;not available&quot; : value;</span>
+    }
+
+    /** The status as the app shows it (same names as the frontend's StatusBadge), never the raw code. */
+    static String label(Object status) {
+<span class="pc bpc" id="L447" title="1 of 2 branches missed.">        if (status == null) {</span>
+<span class="nc" id="L448">            return null;</span>
+        }
+<span class="fc" id="L450">        String code = String.valueOf(status);</span>
+<span class="fc bfc" id="L451" title="All 3 branches covered.">        return switch (code) {</span>
+<span class="fc" id="L452">            case &quot;APPROVED&quot; -&gt; &quot;Awarded&quot;;</span>
+<span class="fc" id="L453">            case &quot;UNDER_REVIEW&quot; -&gt; &quot;Comparing&quot;;</span>
+            default -&gt; {
+<span class="fc" id="L455">                String words = code.replace('_', ' ').toLowerCase(java.util.Locale.ROOT);</span>
+<span class="fc" id="L456">                yield Character.toUpperCase(words.charAt(0)) + words.substring(1);</span>
+            }
+        };
+    }
+
+    private static Map&lt;String, Long&gt; labelled(Map&lt;String, Long&gt; byStatus) {
+<span class="fc" id="L462">        Map&lt;String, Long&gt; out = new LinkedHashMap&lt;&gt;();</span>
+<span class="fc" id="L463">        byStatus.forEach((code, count) -&gt; out.put(label(code), count));</span>
+<span class="fc" id="L464">        return out;</span>
+    }
+
+    // ---------- conversation and answer ----------
+
+    static String conversation(ChatRequest request) {
+<span class="fc" id="L470">        StringBuilder text = new StringBuilder(&quot;CONVERSATION\n&quot;);</span>
+<span class="fc bfc" id="L471" title="All 2 branches covered.">        List&lt;ChatTurn&gt; history = request.history() == null ? List.of() : request.history();</span>
+<span class="fc" id="L472">        history.stream().skip(Math.max(0, history.size() - HISTORY_TURNS)).forEach(turn -&gt;</span>
+<span class="fc bfc" id="L473" title="All 2 branches covered.">                text.append(&quot;user&quot;.equals(turn.role()) ? &quot;User: &quot; : &quot;Assistant: &quot;)</span>
+<span class="pc bpc" id="L474" title="1 of 2 branches missed.">                        .append(turn.text().length() &gt; TURN_CHARS ? turn.text().substring(0, TURN_CHARS) + &quot; [...]&quot; : turn.text())</span>
+<span class="fc" id="L475">                        .append(&quot;\n\n&quot;));</span>
+<span class="fc" id="L476">        text.append(&quot;User (latest message, answer this): &quot;).append(request.message());</span>
+<span class="fc" id="L477">        text.append(&quot;\n\n(&quot;).append(languageDirective(request.message())).append(&quot;)&quot;);</span>
+<span class="fc" id="L478">        return text.toString();</span>
+    }
+
+<span class="fc" id="L481">    private static final Pattern DEVANAGARI = Pattern.compile(&quot;[\\u0900-\\u097F]&quot;);</span>
+    /** Common Hindi words written in Latin letters; two or more mean the message is Hinglish. */
+<span class="fc" id="L483">    private static final Set&lt;String&gt; HINGLISH = Set.of(&quot;hai&quot;, &quot;hain&quot;, &quot;kya&quot;, &quot;kaun&quot;, &quot;kaunsa&quot;, &quot;kaunse&quot;, &quot;kyun&quot;, &quot;kyon&quot;,</span>
+<span class="fc" id="L484">            &quot;kitna&quot;, &quot;kitne&quot;, &quot;kitni&quot;, &quot;sabse&quot;, &quot;mein&quot;, &quot;me&quot;, &quot;ka&quot;, &quot;ki&quot;, &quot;ke&quot;, &quot;ko&quot;, &quot;se&quot;, &quot;pe&quot;, &quot;par&quot;, &quot;batao&quot;, &quot;bata&quot;,</span>
+<span class="fc" id="L485">            &quot;dikhao&quot;, &quot;karo&quot;, &quot;kar&quot;, &quot;nahi&quot;, &quot;nahin&quot;, &quot;abhi&quot;, &quot;kab&quot;, &quot;kahan&quot;, &quot;wala&quot;, &quot;wali&quot;, &quot;chahiye&quot;, &quot;konsa&quot;, &quot;kis&quot;,</span>
+<span class="fc" id="L486">            &quot;kise&quot;, &quot;kisko&quot;, &quot;kiska&quot;, &quot;kiski&quot;, &quot;iska&quot;, &quot;iski&quot;, &quot;uska&quot;, &quot;aur&quot;, &quot;ya&quot;, &quot;bhi&quot;, &quot;sasta&quot;, &quot;mehenga&quot;, &quot;hua&quot;, &quot;gaya&quot;);</span>
+
+    /** Tells the model which language and script to answer in, so Hinglish questions get Hinglish answers. */
+    static String languageDirective(String message) {
+<span class="fc bfc" id="L490" title="All 2 branches covered.">        if (DEVANAGARI.matcher(message).find()) {</span>
+<span class="fc" id="L491">            return &quot;Reply in Hindi using Devanagari script.&quot;;</span>
+        }
+<span class="fc" id="L493">        long hindiWords = java.util.Arrays.stream(message.toLowerCase(java.util.Locale.ROOT).split(&quot;[^a-z]+&quot;))</span>
+<span class="fc" id="L494">                .filter(HINGLISH::contains).count();</span>
+<span class="fc bfc" id="L495" title="All 2 branches covered.">        return hindiWords &gt;= 2</span>
+<span class="fc" id="L496">                ? &quot;The user wrote Hinglish in Latin letters. Reply in Hinglish using ONLY Latin letters - no Devanagari.&quot;</span>
+<span class="fc" id="L497">                : &quot;Reply in English.&quot;;</span>
+    }
+
+    static Map&lt;String, Object&gt; responseFormat() {
+<span class="fc" id="L501">        Map&lt;String, Object&gt; link = new LinkedHashMap&lt;&gt;();</span>
+<span class="fc" id="L502">        link.put(&quot;type&quot;, &quot;object&quot;);</span>
+<span class="fc" id="L503">        link.put(&quot;properties&quot;, Map.of(</span>
+<span class="fc" id="L504">                &quot;type&quot;, Map.of(&quot;type&quot;, &quot;string&quot;, &quot;enum&quot;, List.of(&quot;PURCHASE_REQUEST&quot;, &quot;QUOTATION&quot;)),</span>
+<span class="fc" id="L505">                &quot;id&quot;, Map.of(&quot;type&quot;, &quot;integer&quot;)));</span>
+<span class="fc" id="L506">        link.put(&quot;required&quot;, List.of(&quot;type&quot;, &quot;id&quot;));</span>
+<span class="fc" id="L507">        link.put(&quot;additionalProperties&quot;, false);</span>
+
+<span class="fc" id="L509">        Map&lt;String, Object&gt; schema = new LinkedHashMap&lt;&gt;();</span>
+<span class="fc" id="L510">        schema.put(&quot;type&quot;, &quot;object&quot;);</span>
+<span class="fc" id="L511">        schema.put(&quot;properties&quot;, Map.of(</span>
+<span class="fc" id="L512">                &quot;reply&quot;, Map.of(&quot;type&quot;, &quot;string&quot;, &quot;description&quot;, &quot;The answer shown to the user (plain text, &quot;</span>
+                        + &quot;may use '- ' bullets and **bold**)&quot;),
+<span class="fc" id="L514">                &quot;links&quot;, Map.of(&quot;type&quot;, &quot;array&quot;, &quot;items&quot;, link),</span>
+<span class="fc" id="L515">                &quot;action&quot;, Map.of(&quot;type&quot;, &quot;string&quot;, &quot;enum&quot;, List.of(&quot;NONE&quot;, &quot;DRAFT_RFQ&quot;),</span>
+<span class="fc" id="L516">                        &quot;description&quot;, &quot;DRAFT_RFQ when the message is an RFQ / item list to turn into a draft&quot;)));</span>
+<span class="fc" id="L517">        schema.put(&quot;required&quot;, List.of(&quot;reply&quot;, &quot;links&quot;, &quot;action&quot;));</span>
+<span class="fc" id="L518">        schema.put(&quot;additionalProperties&quot;, false);</span>
+<span class="fc" id="L519">        return AiMessages.jsonSchema(&quot;assistant_answer&quot;, schema);</span>
+    }
+
+    /** Reads the model's JSON; links are kept only for records that were in the context (no invented ids). */
+    ChatResponse readAnswer(String text, Context context) {
+        JsonNode root;
+        try {
+<span class="fc" id="L526">            root = objectMapper.readTree(text);</span>
+<span class="fc" id="L527">        } catch (JacksonException e) {</span>
+            // not JSON after all: show the text itself rather than failing
+<span class="pc bpc" id="L529" title="2 of 4 branches missed.">            return new ChatResponse(text == null || text.isBlank() ? &quot;Sorry, no answer was returned. Please try again.&quot;</span>
+<span class="fc" id="L530">                    : text.strip(), List.of());</span>
+        }
+<span class="fc" id="L532">        String reply = root.path(&quot;reply&quot;).asString(&quot;&quot;).strip();</span>
+<span class="pc bpc" id="L533" title="1 of 2 branches missed.">        if (reply.isEmpty()) {</span>
+<span class="nc" id="L534">            reply = &quot;Sorry, no answer was returned. Please try again.&quot;;</span>
+        }
+<span class="fc" id="L536">        List&lt;AssistantLink&gt; links = new ArrayList&lt;&gt;();</span>
+<span class="fc" id="L537">        Set&lt;String&gt; seen = new LinkedHashSet&lt;&gt;();</span>
+<span class="fc bfc" id="L538" title="All 2 branches covered.">        for (JsonNode link : root.path(&quot;links&quot;)) {</span>
+<span class="fc" id="L539">            String type = link.path(&quot;type&quot;).asString(&quot;&quot;);</span>
+<span class="fc" id="L540">            long id = link.path(&quot;id&quot;).asLong(-1);</span>
+<span class="fc bfc" id="L541" title="All 2 branches covered.">            String label = &quot;PURCHASE_REQUEST&quot;.equals(type) ? context.requests().get(id)</span>
+<span class="pc bpc" id="L542" title="1 of 2 branches missed.">                    : &quot;QUOTATION&quot;.equals(type) ? context.quotations().get(id) : null;</span>
+<span class="pc bpc" id="L543" title="1 of 6 branches missed.">            if (label != null &amp;&amp; seen.add(type + id) &amp;&amp; links.size() &lt; 6) {</span>
+<span class="fc" id="L544">                links.add(new AssistantLink(type, id, label));</span>
+            }
+        }
+<span class="fc" id="L547">        return new ChatResponse(reply, links);</span>
+    }
+
+    private String toJson(Object value) {
+        try {
+<span class="fc" id="L552">            return objectMapper.writeValueAsString(value);</span>
+<span class="nc" id="L553">        } catch (JacksonException e) {</span>
+<span class="nc" id="L554">            throw new AiServiceException(&quot;Could not prepare the data for the assistant&quot;, e);</span>
+        }
+    }
+
+    /** Whether Groq is configured, as the extraction service (which holds the key) reports it. */
+    private AiStatus aiStatus() {
+        try {
+<span class="fc" id="L561">            return platform.aiStatus();</span>
+<span class="nc" id="L562">        } catch (ServiceUnavailableException e) {</span>
+<span class="nc" id="L563">            return new AiStatus(false, null, &quot;NONE&quot;, &quot;none&quot;, false, false);</span>
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.13.202504020838</span></div></body></html>

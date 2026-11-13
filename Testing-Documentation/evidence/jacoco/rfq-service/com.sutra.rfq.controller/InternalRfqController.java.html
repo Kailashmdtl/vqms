@@ -1,0 +1,87 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>InternalRfqController.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">SUTRA rfq service</a> &gt; <a href="index.source.html" class="el_package">com.sutra.rfq.controller</a> &gt; <span class="el_source">InternalRfqController.java</span></div><h1>InternalRfqController.java</h1><pre class="source lang-java linenums">package com.sutra.rfq.controller;
+
+import com.sutra.api.rfq.PurchaseRequestResponses.PurchaseRequestSummary;
+import com.sutra.api.enums.PurchaseRequestStatus;
+import com.sutra.api.internal.InternalContracts.StatusChange;
+import com.sutra.api.internal.InternalContracts.StatusCounts;
+import com.sutra.api.internal.InternalContracts.Usage;
+import com.sutra.api.rfq.PurchaseRequestResponses.PurchaseRequestResponse;
+import com.sutra.common.web.PageResponse;
+import com.sutra.rfq.service.PurchaseRequestService;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
+
+import java.util.List;
+
+/** RFQ data and status changes for the other services (service tokens only). */
+@RestController
+@RequestMapping(&quot;/internal&quot;)
+public class InternalRfqController {
+
+    private final PurchaseRequestService rfqs;
+
+<span class="fc" id="L29">    public InternalRfqController(PurchaseRequestService rfqs) {</span>
+<span class="fc" id="L30">        this.rfqs = rfqs;</span>
+<span class="fc" id="L31">    }</span>
+
+    @GetMapping(&quot;/rfqs/{id}&quot;)
+    public PurchaseRequestResponse get(@PathVariable Long id) {
+<span class="fc" id="L35">        return rfqs.get(id); // mapped inside the service's transaction (the items load lazily)</span>
+    }
+
+    @GetMapping(&quot;/rfqs&quot;)
+    public List&lt;PurchaseRequestResponse&gt; getMany(@RequestParam List&lt;Long&gt; ids) {
+<span class="nc" id="L40">        return rfqs.getMany(ids);</span>
+    }
+
+    /** Every open RFQ plus the ones the vendor quoted on ({@code quotedIds}), newest first. */
+    @GetMapping(&quot;/rfqs/vendor-view&quot;)
+    public PageResponse&lt;PurchaseRequestResponse&gt; vendorView(@RequestParam(required = false) List&lt;Long&gt; quotedIds,
+                                                            @RequestParam(defaultValue = &quot;0&quot;) int page,
+                                                            @RequestParam(defaultValue = &quot;20&quot;) int size) {
+<span class="nc" id="L48">        return rfqs.vendorView(quotedIds, page, size);</span>
+    }
+
+    @GetMapping(&quot;/rfqs/open-ids&quot;)
+    public List&lt;Long&gt; openIds(@RequestParam(required = false) Long requestedById) {
+<span class="nc" id="L53">        return rfqs.openIds(requestedById);</span>
+    }
+
+    @GetMapping(&quot;/rfqs/awaiting-award-count&quot;)
+    public long awaitingAward(@RequestParam(required = false) Long excludeRequestedById) {
+<span class="nc" id="L58">        return rfqs.countAwaitingAward(excludeRequestedById);</span>
+    }
+
+    @GetMapping(&quot;/rfqs/stats&quot;)
+    public StatusCounts stats() {
+<span class="nc" id="L63">        return new StatusCounts(rfqs.countByStatus());</span>
+    }
+
+    @PostMapping(&quot;/rfqs/{id}/status&quot;)
+    public PurchaseRequestResponse changeStatus(@PathVariable Long id, @RequestBody StatusChange change) {
+<span class="fc" id="L68">        return rfqs.applyStatusChange(id, change);</span>
+    }
+
+    /** {@code kind}: entities, sub-entities, customers or users. */
+    @GetMapping(&quot;/usage/{kind}/{id}&quot;)
+    public ResponseEntity&lt;Usage&gt; usage(@PathVariable String kind, @PathVariable Long id) {
+<span class="nc" id="L74">        long count = rfqs.usage(kind, id);</span>
+<span class="nc bnc" id="L75" title="All 2 branches missed.">        return count &lt; 0 ? ResponseEntity.notFound().build() : ResponseEntity.ok(new Usage(count, 0));</span>
+    }
+
+    /** RFQ search as the RFQ list shows it (reporting: dashboard and assistant). */
+    @GetMapping(&quot;/rfqs/search&quot;)
+    public PageResponse&lt;PurchaseRequestSummary&gt; search(@RequestParam(required = false) String q,
+                                                       @RequestParam(required = false) PurchaseRequestStatus status,
+                                                       @RequestParam(defaultValue = &quot;0&quot;) int page,
+                                                       @RequestParam(defaultValue = &quot;20&quot;) int size) {
+<span class="nc" id="L84">        return rfqs.search(q, status, page, size);</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.13.202504020838</span></div></body></html>

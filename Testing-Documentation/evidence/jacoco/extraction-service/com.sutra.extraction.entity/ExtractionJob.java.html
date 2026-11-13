@@ -1,0 +1,73 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>ExtractionJob.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">SUTRA extraction service</a> &gt; <a href="index.source.html" class="el_package">com.sutra.extraction.entity</a> &gt; <span class="el_source">ExtractionJob.java</span></div><h1>ExtractionJob.java</h1><pre class="source lang-java linenums">package com.sutra.extraction.entity;
+
+import com.sutra.api.enums.ExtractionEngine;
+import com.sutra.api.enums.ExtractionSource;
+import jakarta.persistence.Column;
+import jakarta.persistence.Entity;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
+import jakarta.persistence.GeneratedValue;
+import jakarta.persistence.GenerationType;
+import jakarta.persistence.Id;
+import jakarta.persistence.Table;
+import lombok.Getter;
+import lombok.Setter;
+
+import java.time.Instant;
+
+/**
+ * One reading of one quotation: QUEUED when asked for, RUNNING while the engines read it, then SUCCEEDED (the
+ * result was handed to the quotation service), FAILED (with the reason) or SKIPPED (the quotation was already
+ * being read). Kept as a history of every reading: which engine, model, how long, and what went wrong.
+ */
+@Entity
+@Table(name = &quot;extraction_job&quot;)
+@Getter
+@Setter
+<span class="nc" id="L27">public class ExtractionJob {</span>
+
+<span class="nc" id="L29">    public enum Status { QUEUED, RUNNING, SUCCEEDED, FAILED, SKIPPED }</span>
+
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
+
+    @Column(name = &quot;quotation_id&quot;, nullable = false)
+    private Long quotationId;
+
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false, length = 10)
+<span class="nc" id="L40">    private ExtractionEngine engine = ExtractionEngine.AUTO;</span>
+
+    /** The Groq model asked for first, or null for the configured order. */
+    @Column(name = &quot;preferred_model&quot;, length = 100)
+    private String preferredModel;
+
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false, length = 10)
+<span class="nc" id="L48">    private Status status = Status.QUEUED;</span>
+
+    /** The engine that produced the result. */
+    @Enumerated(EnumType.STRING)
+    @Column(length = 20)
+    private ExtractionSource source;
+
+    @Column(name = &quot;model_used&quot;, length = 100)
+    private String modelUsed;
+
+    @Column(name = &quot;items_read&quot;)
+    private Integer itemsRead;
+
+    @Column(name = &quot;failure_reason&quot;, length = 1000)
+    private String failureReason;
+
+    @Column(name = &quot;requested_at&quot;, nullable = false)
+<span class="nc" id="L65">    private Instant requestedAt = Instant.now();</span>
+
+    @Column(name = &quot;started_at&quot;)
+    private Instant startedAt;
+
+    @Column(name = &quot;finished_at&quot;)
+    private Instant finishedAt;
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.13.202504020838</span></div></body></html>

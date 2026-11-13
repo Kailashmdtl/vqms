@@ -1,0 +1,172 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>PlatformClient.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">SUTRA reporting service</a> &gt; <a href="index.source.html" class="el_package">com.sutra.reporting.client</a> &gt; <span class="el_source">PlatformClient.java</span></div><h1>PlatformClient.java</h1><pre class="source lang-java linenums">package com.sutra.reporting.client;
+
+import com.sutra.api.decision.DecisionResponses.ApprovalResponse;
+import com.sutra.api.decision.DecisionResponses.ComparisonReportResponse;
+import com.sutra.api.enums.PurchaseRequestStatus;
+import com.sutra.api.internal.InternalContracts.AiCompletion;
+import com.sutra.api.internal.InternalContracts.AiCompletionRequest;
+import com.sutra.api.internal.InternalContracts.AiStatus;
+import com.sutra.api.internal.InternalContracts.StatusCounts;
+import com.sutra.api.quotation.QuotationResponses.QuotationResponse;
+import com.sutra.api.quotation.QuotationResponses.QuotationSummary;
+import com.sutra.api.rfq.PurchaseRequestRequests.RfqTextRequest;
+import com.sutra.api.rfq.PurchaseRequestResponses.PurchaseRequestResponse;
+import com.sutra.api.rfq.PurchaseRequestResponses.PurchaseRequestSummary;
+import com.sutra.api.rfq.RfqDraftResponses.RfqDraft;
+import com.sutra.common.client.InternalRestClients;
+import com.sutra.common.client.ServiceCall;
+import com.sutra.common.client.ServiceUrls;
+import com.sutra.common.web.PageResponse;
+import org.springframework.core.ParameterizedTypeReference;
+import org.springframework.stereotype.Component;
+import org.springframework.web.client.RestClient;
+
+import java.util.Collection;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+
+/**
+ * Everything the reporting service reads, from the services that own it (their {@code /internal} APIs, with a
+ * service token). The public endpoints of this service are role-checked; these calls only fetch data.
+ */
+@Component
+public class PlatformClient {
+
+<span class="fc" id="L36">    private static final ParameterizedTypeReference&lt;List&lt;Long&gt;&gt; IDS = new ParameterizedTypeReference&lt;&gt;() { };</span>
+
+    private final RestClient rfq;
+    private final RestClient quotation;
+    private final RestClient comparison;
+    private final RestClient approval;
+    private final RestClient extraction;
+
+<span class="nc" id="L44">    public PlatformClient(InternalRestClients clients, ServiceUrls urls) {</span>
+<span class="nc" id="L45">        this.rfq = clients.forBaseUrl(urls.rfq());</span>
+<span class="nc" id="L46">        this.quotation = clients.forBaseUrl(urls.quotation());</span>
+<span class="nc" id="L47">        this.comparison = clients.forBaseUrl(urls.comparison());</span>
+<span class="nc" id="L48">        this.approval = clients.forBaseUrl(urls.approval());</span>
+<span class="nc" id="L49">        this.extraction = clients.forBaseUrl(urls.extraction());</span>
+<span class="nc" id="L50">    }</span>
+
+    // ---------- RFQs ----------
+
+    public PurchaseRequestResponse rfq(Long id) {
+<span class="nc" id="L55">        return ServiceCall.call(&quot;RFQ service&quot;, () -&gt; rfq.get().uri(&quot;/internal/rfqs/{id}&quot;, id)</span>
+<span class="nc" id="L56">                .retrieve().body(PurchaseRequestResponse.class));</span>
+    }
+
+    public PageResponse&lt;PurchaseRequestSummary&gt; searchRfqs(String q, PurchaseRequestStatus status, int page, int size) {
+<span class="nc" id="L60">        return ServiceCall.call(&quot;RFQ service&quot;, () -&gt; rfq.get().uri(b -&gt; b.path(&quot;/internal/rfqs/search&quot;)</span>
+<span class="nc" id="L61">                        .queryParamIfPresent(&quot;q&quot;, Optional.ofNullable(q)).queryParamIfPresent(&quot;status&quot;, Optional.ofNullable(status))</span>
+<span class="nc" id="L62">                        .queryParam(&quot;page&quot;, page).queryParam(&quot;size&quot;, size).build())</span>
+<span class="nc" id="L63">                .retrieve().body(new ParameterizedTypeReference&lt;PageResponse&lt;PurchaseRequestSummary&gt;&gt;() { }));</span>
+    }
+
+    public Map&lt;String, Long&gt; rfqCounts() {
+<span class="nc" id="L67">        StatusCounts counts = ServiceCall.call(&quot;RFQ service&quot;, () -&gt; rfq.get().uri(&quot;/internal/rfqs/stats&quot;)</span>
+<span class="nc" id="L68">                .retrieve().body(StatusCounts.class));</span>
+<span class="nc bnc" id="L69" title="All 2 branches missed.">        return counts == null ? Map.of() : counts.byStatus();</span>
+    }
+
+    /** Open RFQs raised by the user (every buyer when null). */
+    public List&lt;Long&gt; openRfqIds(Long requestedById) {
+<span class="nc" id="L74">        return ServiceCall.call(&quot;RFQ service&quot;, () -&gt; rfq.get().uri(b -&gt; b.path(&quot;/internal/rfqs/open-ids&quot;)</span>
+<span class="nc" id="L75">                .queryParamIfPresent(&quot;requestedById&quot;, Optional.ofNullable(requestedById)).build()).retrieve().body(IDS));</span>
+    }
+
+    public long awaitingAward(Long excludeRequestedById) {
+<span class="nc" id="L79">        Long n = ServiceCall.call(&quot;RFQ service&quot;, () -&gt; rfq.get().uri(b -&gt; b.path(&quot;/internal/rfqs/awaiting-award-count&quot;)</span>
+<span class="nc" id="L80">                .queryParamIfPresent(&quot;excludeRequestedById&quot;, Optional.ofNullable(excludeRequestedById)).build())</span>
+<span class="nc" id="L81">                .retrieve().body(Long.class));</span>
+<span class="nc bnc" id="L82" title="All 2 branches missed.">        return n == null ? 0 : n;</span>
+    }
+
+    /** Every open RFQ plus the ones the vendor quoted on. */
+    public PageResponse&lt;PurchaseRequestResponse&gt; vendorView(Collection&lt;Long&gt; quotedIds, int page, int size) {
+<span class="nc" id="L87">        return ServiceCall.call(&quot;RFQ service&quot;, () -&gt; rfq.get().uri(b -&gt; b.path(&quot;/internal/rfqs/vendor-view&quot;)</span>
+<span class="nc" id="L88">                        .queryParam(&quot;quotedIds&quot;, quotedIds.toArray()).queryParam(&quot;page&quot;, page).queryParam(&quot;size&quot;, size).build())</span>
+<span class="nc" id="L89">                .retrieve().body(new ParameterizedTypeReference&lt;PageResponse&lt;PurchaseRequestResponse&gt;&gt;() { }));</span>
+    }
+
+    public List&lt;PurchaseRequestResponse&gt; rfqs(Collection&lt;Long&gt; ids) {
+<span class="nc bnc" id="L93" title="All 2 branches missed.">        if (ids.isEmpty()) {</span>
+<span class="nc" id="L94">            return List.of();</span>
+        }
+<span class="nc" id="L96">        return ServiceCall.call(&quot;RFQ service&quot;, () -&gt; rfq.get().uri(b -&gt; b.path(&quot;/internal/rfqs&quot;)</span>
+<span class="nc" id="L97">                .queryParam(&quot;ids&quot;, ids.toArray()).build())</span>
+<span class="nc" id="L98">                .retrieve().body(new ParameterizedTypeReference&lt;List&lt;PurchaseRequestResponse&gt;&gt;() { }));</span>
+    }
+
+    // ---------- quotations ----------
+
+    public List&lt;QuotationSummary&gt; quotationSummaries(Long rfqId) {
+<span class="nc" id="L104">        return ServiceCall.call(&quot;quotation service&quot;, () -&gt; quotation.get()</span>
+<span class="nc" id="L105">                .uri(&quot;/internal/rfqs/{id}/quotation-summaries&quot;, rfqId)</span>
+<span class="nc" id="L106">                .retrieve().body(new ParameterizedTypeReference&lt;List&lt;QuotationSummary&gt;&gt;() { }));</span>
+    }
+
+    public QuotationResponse quotation(Long id) {
+<span class="nc" id="L110">        return ServiceCall.call(&quot;quotation service&quot;, () -&gt; quotation.get().uri(&quot;/internal/quotations/{id}&quot;, id)</span>
+<span class="nc" id="L111">                .retrieve().body(QuotationResponse.class));</span>
+    }
+
+    public Map&lt;String, Long&gt; quotationCounts() {
+<span class="nc" id="L115">        StatusCounts counts = ServiceCall.call(&quot;quotation service&quot;, () -&gt; quotation.get()</span>
+<span class="nc" id="L116">                .uri(&quot;/internal/quotations/stats&quot;).retrieve().body(StatusCounts.class));</span>
+<span class="nc bnc" id="L117" title="All 2 branches missed.">        return counts == null ? Map.of() : counts.byStatus();</span>
+    }
+
+    /** Of these RFQs, those with a quotation ready to compare. */
+    public List&lt;Long&gt; rfqsWithReadyQuotations(Collection&lt;Long&gt; rfqIds) {
+<span class="nc bnc" id="L122" title="All 2 branches missed.">        if (rfqIds.isEmpty()) {</span>
+<span class="nc" id="L123">            return List.of();</span>
+        }
+<span class="nc" id="L125">        return ServiceCall.call(&quot;quotation service&quot;, () -&gt; quotation.get()</span>
+<span class="nc" id="L126">                .uri(b -&gt; b.path(&quot;/internal/rfqs/with-ready-quotations&quot;).queryParam(&quot;rfqIds&quot;, rfqIds.toArray()).build())</span>
+<span class="nc" id="L127">                .retrieve().body(IDS));</span>
+    }
+
+    /** The vendor's own quotations and the RFQs they are for. */
+    public List&lt;com.sutra.api.internal.InternalContracts.QuotationRef&gt; quotationsOf(Long vendorId) {
+<span class="nc" id="L132">        return ServiceCall.call(&quot;quotation service&quot;, () -&gt; quotation.get()</span>
+<span class="nc" id="L133">                .uri(&quot;/internal/vendors/{id}/quotation-refs&quot;, vendorId)</span>
+<span class="nc" id="L134">                .retrieve().body(new ParameterizedTypeReference&lt;List&lt;com.sutra.api.internal.InternalContracts.QuotationRef&gt;&gt;() { }));</span>
+    }
+
+    // ---------- comparisons, approvals, AI ----------
+
+    public List&lt;ComparisonReportResponse&gt; comparisons(Long rfqId) {
+<span class="nc" id="L140">        return ServiceCall.call(&quot;comparison service&quot;, () -&gt; comparison.get().uri(&quot;/internal/rfqs/{id}/comparisons&quot;, rfqId)</span>
+<span class="nc" id="L141">                .retrieve().body(new ParameterizedTypeReference&lt;List&lt;ComparisonReportResponse&gt;&gt;() { }));</span>
+    }
+
+    public ComparisonReportResponse comparison(Long reportId) {
+<span class="nc" id="L145">        return ServiceCall.call(&quot;comparison service&quot;, () -&gt; comparison.get().uri(&quot;/internal/comparisons/{id}&quot;, reportId)</span>
+<span class="nc" id="L146">                .retrieve().body(ComparisonReportResponse.class));</span>
+    }
+
+    /** The newest decision on the RFQ, if there is one. */
+    public Optional&lt;ApprovalResponse&gt; latestDecision(Long rfqId) {
+<span class="nc" id="L151">        List&lt;ApprovalResponse&gt; found = ServiceCall.call(&quot;approval service&quot;, () -&gt; approval.get()</span>
+<span class="nc" id="L152">                .uri(&quot;/internal/rfqs/{id}/approvals&quot;, rfqId)</span>
+<span class="nc" id="L153">                .retrieve().body(new ParameterizedTypeReference&lt;List&lt;ApprovalResponse&gt;&gt;() { }));</span>
+<span class="nc bnc" id="L154" title="All 2 branches missed.">        return found == null ? Optional.empty() : found.stream().findFirst();</span>
+    }
+
+    public AiStatus aiStatus() {
+<span class="nc" id="L158">        return ServiceCall.call(&quot;extraction service&quot;, () -&gt; extraction.get().uri(&quot;/internal/ai/status&quot;)</span>
+<span class="nc" id="L159">                .retrieve().body(AiStatus.class));</span>
+    }
+
+    public AiCompletion complete(AiCompletionRequest request) {
+<span class="nc" id="L163">        return ServiceCall.call(&quot;extraction service&quot;, () -&gt; extraction.post().uri(&quot;/internal/ai/complete&quot;)</span>
+<span class="nc" id="L164">                .body(request).retrieve().body(AiCompletion.class));</span>
+    }
+
+    public RfqDraft rfqDraftFromText(String text) {
+<span class="nc" id="L168">        return ServiceCall.call(&quot;extraction service&quot;, () -&gt; extraction.post().uri(&quot;/internal/rfq-drafts/from-text&quot;)</span>
+<span class="nc" id="L169">                .body(new RfqTextRequest(text)).retrieve().body(RfqDraft.class));</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.13.202504020838</span></div></body></html>

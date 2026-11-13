@@ -1,0 +1,224 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>ComparisonEngine.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">SUTRA comparison service</a> &gt; <a href="index.source.html" class="el_package">com.sutra.comparison.service.internal</a> &gt; <span class="el_source">ComparisonEngine.java</span></div><h1>ComparisonEngine.java</h1><pre class="source lang-java linenums"><span class="fc" id="L1">package com.sutra.comparison.service.internal;</span>
+
+import com.sutra.api.rfq.PurchaseRequestResponses.RequestItemResponse;
+import com.sutra.api.rfq.PurchaseRequestResponses.PurchaseRequestResponse;
+import com.sutra.api.quotation.QuotationResponses.QuotationItemResponse;
+import com.sutra.api.quotation.QuotationResponses.QuotationResponse;
+import com.sutra.api.comparison.ComparisonResult;
+import com.sutra.api.rules.TermsCheck;
+import com.sutra.api.comparison.ComparisonResult.ItemCell;
+import com.sutra.api.comparison.ComparisonResult.ItemRow;
+import com.sutra.api.comparison.ComparisonResult.QuotationColumn;
+import com.sutra.api.comparison.ComparisonResult.UnmatchedItem;
+import com.sutra.common.util.Money;
+import java.math.BigDecimal;
+import java.math.RoundingMode;
+import java.time.Clock;
+import java.time.LocalDate;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import org.springframework.stereotype.Component;
+
+/**
+ * Builds the side-by-side comparison. Pure calculation over loaded entities - no persistence.
+ *
+ * &lt;p&gt;Prices are compared like for like: each matched line's total (after discount and tax) is divided by the
+ * quoted quantity to get an effective unit price, then multiplied by the &lt;em&gt;requested&lt;/em&gt; quantity. Ranking
+ * uses the sum of those comparable totals, and only quotations that quote every requested item, in the request
+ * currency, are ranked. The ranking is informational; nothing here selects a vendor.&lt;/p&gt;
+ */
+@Component
+public class ComparisonEngine {
+
+    private final Clock clock;
+
+<span class="fc" id="L40">    public ComparisonEngine(Clock clock) {</span>
+<span class="fc" id="L41">        this.clock = clock;</span>
+<span class="fc" id="L42">    }</span>
+
+    public ComparisonResult compare(PurchaseRequestResponse request, List&lt;QuotationResponse&gt; quotations) {
+<span class="fc" id="L45">        List&lt;String&gt; warnings = new ArrayList&lt;&gt;();</span>
+<span class="fc" id="L46">        String currency = request.currency();</span>
+<span class="fc" id="L47">        LocalDate today = LocalDate.now(clock);</span>
+
+        // quotationId -&gt; requestItemId -&gt; matched line
+<span class="fc" id="L50">        Map&lt;Long, Map&lt;Long, QuotationItemResponse&gt;&gt; matches = new HashMap&lt;&gt;();</span>
+<span class="fc" id="L51">        List&lt;UnmatchedItem&gt; unmatched = new ArrayList&lt;&gt;();</span>
+<span class="fc bfc" id="L52" title="All 2 branches covered.">        for (QuotationResponse q : quotations) {</span>
+<span class="fc" id="L53">            Map&lt;Long, QuotationItemResponse&gt; byRequestItem = new LinkedHashMap&lt;&gt;();</span>
+<span class="fc bfc" id="L54" title="All 2 branches covered.">            for (QuotationItemResponse item : q.items()) {</span>
+<span class="fc bfc" id="L55" title="All 2 branches covered.">                if (item.requestItemId() == null) {</span>
+<span class="fc" id="L56">                    unmatched.add(new UnmatchedItem(q.id(), q.vendorName(), item.id(),</span>
+<span class="fc" id="L57">                            item.description(), item.lineTotal()));</span>
+<span class="pc bpc" id="L58" title="1 of 2 branches missed.">                } else if (byRequestItem.putIfAbsent(item.requestItemId(), item) != null) {</span>
+<span class="nc" id="L59">                    warnings.add(q.vendorName() + &quot; has several lines matched to request line &quot;</span>
+<span class="nc" id="L60">                            + item.requestItemLineNumber() + &quot;; only line &quot;</span>
+<span class="nc" id="L61">                            + byRequestItem.get(item.requestItemId()).lineNumber() + &quot; is compared&quot;);</span>
+                }
+            }
+<span class="fc" id="L64">            matches.put(q.id(), byRequestItem);</span>
+<span class="fc bfc" id="L65" title="All 2 branches covered.">            if (!sameCurrency(q, currency)) {</span>
+<span class="fc" id="L66">                warnings.add(q.vendorName() + &quot; quoted in &quot; + q.currency() + &quot; instead of &quot; + currency</span>
+                        + &quot;; it is shown but not ranked&quot;);
+            }
+        }
+
+        // Rows: one per requested item
+<span class="fc" id="L72">        List&lt;ItemRow&gt; rows = new ArrayList&lt;&gt;();</span>
+<span class="fc" id="L73">        Map&lt;Long, BigDecimal&gt; comparableTotals = new HashMap&lt;&gt;();</span>
+<span class="fc" id="L74">        Map&lt;Long, Integer&gt; quotedCounts = new HashMap&lt;&gt;();</span>
+<span class="fc" id="L75">        Map&lt;Long, Boolean&gt; pricedFully = new HashMap&lt;&gt;();</span>
+<span class="fc bfc" id="L76" title="All 2 branches covered.">        for (QuotationResponse q : quotations) {</span>
+<span class="fc" id="L77">            comparableTotals.put(q.id(), BigDecimal.ZERO);</span>
+<span class="fc" id="L78">            quotedCounts.put(q.id(), 0);</span>
+<span class="fc" id="L79">            pricedFully.put(q.id(), true);</span>
+        }
+
+<span class="fc bfc" id="L82" title="All 2 branches covered.">        for (RequestItemResponse requested : request.items()) {</span>
+<span class="fc" id="L83">            List&lt;CellDraft&gt; drafts = new ArrayList&lt;&gt;();</span>
+<span class="fc bfc" id="L84" title="All 2 branches covered.">            for (QuotationResponse q : quotations) {</span>
+<span class="fc" id="L85">                QuotationItemResponse item = matches.get(q.id()).get(requested.id());</span>
+<span class="fc bfc" id="L86" title="All 2 branches covered.">                if (item == null) {</span>
+<span class="fc" id="L87">                    drafts.add(new CellDraft(q, null, null, null));</span>
+<span class="fc" id="L88">                    continue;</span>
+                }
+<span class="fc" id="L90">                quotedCounts.merge(q.id(), 1, Integer::sum);</span>
+<span class="fc" id="L91">                BigDecimal effective = effectiveUnitPrice(item);</span>
+<span class="pc bpc" id="L92" title="1 of 2 branches missed.">                BigDecimal comparable = effective == null ? null : Money.round(effective.multiply(requested.quantity()));</span>
+<span class="pc bpc" id="L93" title="1 of 2 branches missed.">                if (comparable == null) {</span>
+<span class="nc" id="L94">                    pricedFully.put(q.id(), false);</span>
+<span class="nc" id="L95">                } else {</span>
+<span class="fc" id="L96">                    comparableTotals.merge(q.id(), comparable, BigDecimal::add);</span>
+                }
+<span class="fc" id="L98">                drafts.add(new CellDraft(q, item, effective, comparable));</span>
+            }
+
+<span class="fc" id="L101">            BigDecimal lowest = drafts.stream()</span>
+<span class="fc bfc" id="L102" title="All 4 branches covered.">                    .filter(d -&gt; d.effective != null &amp;&amp; sameCurrency(d.quotation, currency))</span>
+<span class="fc" id="L103">                    .map(d -&gt; d.effective).min(Comparator.naturalOrder()).orElse(null);</span>
+<span class="fc" id="L104">            BigDecimal highest = drafts.stream()</span>
+<span class="fc bfc" id="L105" title="All 4 branches covered.">                    .filter(d -&gt; d.effective != null &amp;&amp; sameCurrency(d.quotation, currency))</span>
+<span class="fc" id="L106">                    .map(d -&gt; d.effective).max(Comparator.naturalOrder()).orElse(null);</span>
+
+<span class="fc" id="L108">            List&lt;ItemCell&gt; cells = drafts.stream().map(d -&gt; toCell(d, requested, lowest, currency)).toList();</span>
+<span class="fc" id="L109">            rows.add(new ItemRow(requested.id(), requested.lineNumber(), requested.itemCode(), requested.description(),</span>
+<span class="fc" id="L110">                    requested.quantity(), requested.unitOfMeasure(), cells, lowest, highest,</span>
+<span class="fc" id="L111">                    Money.percentDifference(highest, lowest)));</span>
+        }
+
+        // Rank complete quotations in the request currency by comparable total
+<span class="fc" id="L115">        int requestedCount = request.items().size();</span>
+<span class="fc" id="L116">        List&lt;QuotationResponse&gt; rankable = quotations.stream()</span>
+<span class="fc" id="L117">                .filter(q -&gt; sameCurrency(q, currency))</span>
+<span class="pc bpc" id="L118" title="1 of 4 branches missed.">                .filter(q -&gt; quotedCounts.get(q.id()) == requestedCount &amp;&amp; pricedFully.get(q.id()))</span>
+<span class="fc" id="L119">                .sorted(Comparator.comparing((QuotationResponse q) -&gt; comparableTotals.get(q.id()))</span>
+<span class="fc" id="L120">                        .thenComparing(QuotationResponse::id))</span>
+<span class="fc" id="L121">                .toList();</span>
+<span class="fc" id="L122">        Map&lt;Long, Integer&gt; ranks = new HashMap&lt;&gt;();</span>
+<span class="fc bfc" id="L123" title="All 2 branches covered.">        for (int i = 0; i &lt; rankable.size(); i++) {</span>
+<span class="fc" id="L124">            ranks.put(rankable.get(i).id(), i + 1);</span>
+        }
+<span class="pc bpc" id="L126" title="1 of 2 branches missed.">        BigDecimal lowestTotal = rankable.isEmpty() ? null : comparableTotals.get(rankable.get(0).id());</span>
+<span class="pc bpc" id="L127" title="3 of 4 branches missed.">        if (rankable.isEmpty() &amp;&amp; !quotations.isEmpty()) {</span>
+<span class="nc" id="L128">            warnings.add(&quot;No quotation covers every requested item with a price in &quot; + currency</span>
+                    + &quot;, so no overall ranking is shown&quot;);
+        }
+
+<span class="fc" id="L132">        List&lt;QuotationColumn&gt; columns = quotations.stream().map(q -&gt; {</span>
+<span class="fc" id="L133">            int quoted = quotedCounts.get(q.id());</span>
+<span class="pc bpc" id="L134" title="1 of 4 branches missed.">            boolean complete = quoted == requestedCount &amp;&amp; pricedFully.get(q.id());</span>
+<span class="fc" id="L135">            BigDecimal comparable = Money.round(comparableTotals.get(q.id()));</span>
+<span class="fc" id="L136">            Integer rank = ranks.get(q.id());</span>
+<span class="pc bpc" id="L137" title="1 of 4 branches missed.">            BigDecimal diff = rank == null || lowestTotal == null ? null : comparable.subtract(lowestTotal);</span>
+<span class="fc bfc" id="L138" title="All 2 branches covered.">            BigDecimal diffPct = rank == null ? null : Money.percentDifference(comparable, lowestTotal);</span>
+<span class="pc bpc" id="L139" title="2 of 4 branches missed.">            boolean expired = q.validUntil() != null &amp;&amp; q.validUntil().isBefore(today);</span>
+<span class="fc" id="L140">            return new QuotationColumn(q.id(), q.version(), q.vendorId(), q.vendorName(),</span>
+<span class="pc bpc" id="L141" title="1 of 2 branches missed.">                    q.quotationNumber(), q.status(), q.currency() == null ? currency : q.currency(),</span>
+<span class="fc" id="L142">                    q.subtotal(), q.discountTotal(), q.taxTotal(), q.grandTotal(), comparable,</span>
+<span class="fc" id="L143">                    q.validUntil(), expired, q.deliveryTerms(), q.paymentTerms(), q.warrantyTerms(),</span>
+<span class="fc" id="L144">                    quoted, requestedCount - quoted, complete, rank, diff, diffPct, openFlags(q),</span>
+<span class="fc" id="L145">                    missingInformation(q, requestedCount - quoted, expired),</span>
+<span class="fc" id="L146">                    VendorGrader.grade(q, rank, diffPct, quoted, requestedCount, today));</span>
+<span class="fc" id="L147">        }).toList();</span>
+
+<span class="pc bpc" id="L149" title="1 of 2 branches missed.">        Long lowestId = rankable.isEmpty() ? null : rankable.get(0).id();</span>
+<span class="fc" id="L150">        return new ComparisonResult(request.id(), currency, columns, rows, unmatched, warnings, lowestId,</span>
+<span class="fc" id="L151">                ComparisonResult.DISCLAIMER);</span>
+    }
+
+    private ItemCell toCell(CellDraft d, RequestItemResponse requested, BigDecimal lowest, String currency) {
+<span class="fc bfc" id="L155" title="All 2 branches covered.">        if (d.item == null) {</span>
+<span class="fc" id="L156">            return new ItemCell(d.quotation.id(), &quot;MISSING&quot;, null, null, null, null, null, null, null, null,</span>
+<span class="fc" id="L157">                    false, false, null, null);</span>
+        }
+<span class="fc" id="L159">        QuotationItemResponse item = d.item;</span>
+<span class="pc bpc" id="L160" title="2 of 6 branches missed.">        boolean isLowest = lowest != null &amp;&amp; d.effective != null &amp;&amp; sameCurrency(d.quotation, currency)</span>
+<span class="fc bfc" id="L161" title="All 2 branches covered.">                &amp;&amp; d.effective.compareTo(lowest) == 0;</span>
+<span class="fc" id="L162">        BigDecimal diff = null;</span>
+<span class="fc" id="L163">        BigDecimal diffPct = null;</span>
+<span class="pc bpc" id="L164" title="2 of 6 branches missed.">        if (lowest != null &amp;&amp; d.effective != null &amp;&amp; sameCurrency(d.quotation, currency)) {</span>
+<span class="fc" id="L165">            diff = Money.round(d.effective.subtract(lowest).multiply(requested.quantity()));</span>
+<span class="fc" id="L166">            diffPct = Money.percentDifference(d.effective, lowest);</span>
+        }
+<span class="pc bpc" id="L168" title="1 of 4 branches missed.">        boolean qtyMismatch = item.quantity() != null &amp;&amp; item.quantity().compareTo(requested.quantity()) != 0;</span>
+<span class="fc" id="L169">        return new ItemCell(d.quotation.id(), &quot;MATCHED&quot;, item.id(), item.description(), item.quantity(),</span>
+<span class="fc" id="L170">                item.unitPrice(), item.lineTotal(), d.effective, d.comparable, item.matchConfidence(),</span>
+<span class="fc" id="L171">                qtyMismatch, isLowest, diff, diffPct);</span>
+    }
+
+    static BigDecimal effectiveUnitPrice(QuotationItemResponse item) {
+<span class="pc bpc" id="L175" title="3 of 6 branches missed.">        if (item.lineTotal() == null || item.quantity() == null || item.quantity().signum() == 0) {</span>
+<span class="nc" id="L176">            return null;</span>
+        }
+<span class="fc" id="L178">        return item.lineTotal().divide(item.quantity(), 4, RoundingMode.HALF_UP);</span>
+    }
+
+    private static boolean sameCurrency(QuotationResponse q, String requestCurrency) {
+<span class="pc bpc" id="L182" title="1 of 4 branches missed.">        return q.currency() == null || Objects.equals(q.currency(), requestCurrency);</span>
+    }
+
+    private static List&lt;String&gt; missingInformation(QuotationResponse q, int missingItems, boolean expired) {
+<span class="fc" id="L186">        List&lt;String&gt; missing = new ArrayList&lt;&gt;();</span>
+<span class="fc bfc" id="L187" title="All 2 branches covered.">        if (missingItems &gt; 0) {</span>
+<span class="fc" id="L188">            missing.add(missingItems + &quot; requested item(s) not quoted&quot;);</span>
+        }
+<span class="pc bpc" id="L190" title="1 of 2 branches missed.">        if (q.validUntil() == null) {</span>
+<span class="nc" id="L191">            missing.add(&quot;Validity date&quot;);</span>
+<span class="pc bpc" id="L192" title="1 of 2 branches missed.">        } else if (expired) {</span>
+<span class="nc" id="L193">            missing.add(&quot;QuotationResponse has expired&quot;);</span>
+        }
+<span class="pc bpc" id="L195" title="2 of 4 branches missed.">        if (q.paymentTerms() == null || q.paymentTerms().isBlank()) {</span>
+<span class="nc" id="L196">            missing.add(&quot;Payment terms&quot;);</span>
+        }
+<span class="pc bpc" id="L198" title="2 of 4 branches missed.">        if (q.deliveryTerms() == null || q.deliveryTerms().isBlank()) {</span>
+<span class="nc" id="L199">            missing.add(&quot;Delivery terms&quot;);</span>
+        }
+<span class="pc bpc" id="L201" title="1 of 2 branches missed.">        if (q.currency() == null) {</span>
+<span class="nc" id="L202">            missing.add(&quot;Currency&quot;);</span>
+        }
+<span class="fc bfc" id="L204" title="All 2 branches covered.">        if (TermsCheck.incomplete(q.warrantyTerms()).isPresent()) {</span>
+<span class="fc" id="L205">            missing.add(&quot;Warranty incomplete&quot;);</span>
+        }
+<span class="pc bpc" id="L207" title="1 of 2 branches missed.">        if (TermsCheck.incomplete(q.deliveryTerms()).isPresent()) {</span>
+<span class="nc" id="L208">            missing.add(&quot;Delivery terms incomplete&quot;);</span>
+        }
+<span class="pc bpc" id="L210" title="1 of 2 branches missed.">        if (TermsCheck.incomplete(q.paymentTerms()).isPresent()) {</span>
+<span class="nc" id="L211">            missing.add(&quot;Payment terms incomplete&quot;);</span>
+        }
+<span class="fc" id="L213">        return missing;</span>
+    }
+
+    private record CellDraft(QuotationResponse quotation, QuotationItemResponse item, BigDecimal effective, BigDecimal comparable) {
+    }
+
+    /** Notes on the quotation that nobody has resolved yet. */
+    static long openFlags(QuotationResponse q) {
+<span class="pc bpc" id="L221" title="2 of 4 branches missed.">        return q.flags() == null ? 0 : q.flags().stream().filter(f -&gt; !f.resolved()).count();</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.13.202504020838</span></div></body></html>

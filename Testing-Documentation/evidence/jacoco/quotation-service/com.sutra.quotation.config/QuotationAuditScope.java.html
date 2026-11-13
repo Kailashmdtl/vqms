@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>QuotationAuditScope.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">SUTRA quotation service</a> &gt; <a href="index.source.html" class="el_package">com.sutra.quotation.config</a> &gt; <span class="el_source">QuotationAuditScope.java</span></div><h1>QuotationAuditScope.java</h1><pre class="source lang-java linenums">package com.sutra.quotation.config;
+
+import com.sutra.common.audit.AuditScopeResolver;
+import com.sutra.quotation.repository.QuotationRepository;
+import org.springframework.context.annotation.Primary;
+import org.springframework.stereotype.Component;
+
+/** Groups quotation audit events under their RFQ, so the audit service can show one RFQ's whole history. */
+@Component
+@Primary
+public class QuotationAuditScope implements AuditScopeResolver {
+
+    private final QuotationRepository quotations;
+
+<span class="fc" id="L15">    public QuotationAuditScope(QuotationRepository quotations) {</span>
+<span class="fc" id="L16">        this.quotations = quotations;</span>
+<span class="fc" id="L17">    }</span>
+
+    @Override
+    public Long purchaseRequestIdOf(String entityType, Long entityId) {
+<span class="pc bpc" id="L21" title="1 of 2 branches missed.">        if (entityId == null) {</span>
+<span class="nc" id="L22">            return null;</span>
+        }
+<span class="pc bpc" id="L24" title="2 of 3 branches missed.">        return switch (entityType) {</span>
+<span class="nc" id="L25">            case &quot;PURCHASE_REQUEST&quot; -&gt; entityId;</span>
+<span class="fc" id="L26">            case &quot;QUOTATION&quot; -&gt; quotations.findById(entityId).map(q -&gt; q.getPurchaseRequestId()).orElse(null);</span>
+<span class="nc" id="L27">            default -&gt; null;</span>
+        };
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.13.202504020838</span></div></body></html>

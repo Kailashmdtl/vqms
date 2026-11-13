@@ -1,0 +1,77 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>AuditLog.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">SUTRA audit service</a> &gt; <a href="index.source.html" class="el_package">com.sutra.audit.entity</a> &gt; <span class="el_source">AuditLog.java</span></div><h1>AuditLog.java</h1><pre class="source lang-java linenums">package com.sutra.audit.entity;
+
+import jakarta.persistence.Column;
+import jakarta.persistence.Entity;
+import jakarta.persistence.GeneratedValue;
+import jakarta.persistence.GenerationType;
+import jakarta.persistence.Id;
+import jakarta.persistence.Table;
+import java.time.Instant;
+import java.util.UUID;
+import lombok.Getter;
+import lombok.Setter;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
+
+/**
+ * One entry of the audit trail, as sent by the service where the action happened. Never changed or deleted (a
+ * database trigger refuses both). {@code hash} = SHA-256 over this entry's content and {@code previousHash}, so a
+ * changed, removed or re-ordered entry breaks the chain (see {@code AuditHashCalculator}).
+ */
+@Entity
+@Table(name = &quot;audit_log&quot;)
+@Getter
+@Setter
+<span class="fc" id="L25">public class AuditLog {</span>
+
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
+
+    @Column(name = &quot;event_id&quot;, nullable = false, unique = true, updatable = false)
+    private UUID eventId;
+
+    @Column(nullable = false, length = 40, updatable = false)
+    private String service;
+
+    @Column(name = &quot;entity_type&quot;, nullable = false, length = 50, updatable = false)
+    private String entityType;
+
+    @Column(name = &quot;entity_id&quot;, updatable = false)
+    private Long entityId;
+
+    /** The RFQ this entry belongs to (for quotations, comparisons and awards too), when there is one. */
+    @Column(name = &quot;purchase_request_id&quot;, updatable = false)
+    private Long purchaseRequestId;
+
+    @Column(nullable = false, length = 50, updatable = false)
+    private String action;
+
+    @Column(name = &quot;performed_by&quot;, nullable = false, length = 60, updatable = false)
+    private String performedBy;
+
+    @Column(name = &quot;performed_at&quot;, nullable = false, updatable = false)
+    private Instant performedAt;
+
+    @Column(name = &quot;received_at&quot;, nullable = false, updatable = false)
+<span class="fc" id="L57">    private Instant receivedAt = Instant.now();</span>
+
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(columnDefinition = &quot;jsonb&quot;, updatable = false)
+    private String details;
+
+    /** Follows one user action through every service (X-Correlation-Id). */
+    @Column(name = &quot;correlation_id&quot;, length = 64, updatable = false)
+    private String correlationId;
+
+    /** Position in the hash chain: 1, 2, 3 ... in the order entries were stored. */
+    @Column(name = &quot;sequence_no&quot;, unique = true)
+    private Long sequenceNo;
+
+    @Column(name = &quot;previous_hash&quot;, length = 64)
+    private String previousHash;
+
+    @Column(length = 64)
+    private String hash;
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.13.202504020838</span></div></body></html>

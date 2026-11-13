@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>RfqClient.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">SUTRA quotation service</a> &gt; <a href="index.source.html" class="el_package">com.sutra.quotation.client</a> &gt; <span class="el_source">RfqClient.java</span></div><h1>RfqClient.java</h1><pre class="source lang-java linenums">package com.sutra.quotation.client;
+
+import com.sutra.api.rfq.PurchaseRequestResponses.PurchaseRequestResponse;
+import com.sutra.common.client.InternalRestClients;
+import com.sutra.common.client.ServiceCall;
+import com.sutra.common.client.ServiceUrls;
+import com.sutra.common.web.PageResponse;
+import org.springframework.core.ParameterizedTypeReference;
+import org.springframework.stereotype.Component;
+import org.springframework.web.client.RestClient;
+
+import java.util.Collection;
+import java.util.List;
+import java.util.Map;
+import java.util.function.Function;
+import java.util.stream.Collectors;
+
+/** The RFQ service: the RFQ a quotation belongs to (status, owner, currency, requested lines). */
+@Component
+public class RfqClient {
+
+    private static final String SERVICE = &quot;RFQ service&quot;;
+
+    private final RestClient client;
+
+<span class="nc" id="L26">    public RfqClient(InternalRestClients clients, ServiceUrls urls) {</span>
+<span class="nc" id="L27">        this.client = clients.forBaseUrl(urls.rfq());</span>
+<span class="nc" id="L28">    }</span>
+
+    /** The RFQ; 404 PURCHASE_REQUEST_NOT_FOUND from the RFQ service when it does not exist. */
+    public PurchaseRequestResponse get(Long id) {
+<span class="nc" id="L32">        return ServiceCall.call(SERVICE, () -&gt; client.get().uri(&quot;/internal/rfqs/{id}&quot;, id)</span>
+<span class="nc" id="L33">                .retrieve().body(PurchaseRequestResponse.class));</span>
+    }
+
+    public Map&lt;Long, PurchaseRequestResponse&gt; getMany(Collection&lt;Long&gt; ids) {
+<span class="nc bnc" id="L37" title="All 2 branches missed.">        if (ids.isEmpty()) {</span>
+<span class="nc" id="L38">            return Map.of();</span>
+        }
+<span class="nc" id="L40">        List&lt;PurchaseRequestResponse&gt; found = ServiceCall.call(SERVICE, () -&gt; client.get()</span>
+<span class="nc" id="L41">                .uri(b -&gt; b.path(&quot;/internal/rfqs&quot;).queryParam(&quot;ids&quot;, ids.toArray()).build())</span>
+<span class="nc" id="L42">                .retrieve().body(new ParameterizedTypeReference&lt;List&lt;PurchaseRequestResponse&gt;&gt;() { }));</span>
+<span class="nc bnc" id="L43" title="All 2 branches missed.">        return found == null ? Map.of()</span>
+<span class="nc" id="L44">                : found.stream().collect(Collectors.toMap(PurchaseRequestResponse::id, Function.identity()));</span>
+    }
+
+    /** Every open RFQ plus the ones the vendor quoted on, newest first. */
+    public PageResponse&lt;PurchaseRequestResponse&gt; vendorView(Collection&lt;Long&gt; quotedIds, int page, int size) {
+<span class="nc" id="L49">        return ServiceCall.call(SERVICE, () -&gt; client.get()</span>
+<span class="nc" id="L50">                .uri(b -&gt; b.path(&quot;/internal/rfqs/vendor-view&quot;).queryParam(&quot;quotedIds&quot;, quotedIds.toArray())</span>
+<span class="nc" id="L51">                        .queryParam(&quot;page&quot;, page).queryParam(&quot;size&quot;, size).build())</span>
+<span class="nc" id="L52">                .retrieve().body(new ParameterizedTypeReference&lt;PageResponse&lt;PurchaseRequestResponse&gt;&gt;() { }));</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.13.202504020838</span></div></body></html>

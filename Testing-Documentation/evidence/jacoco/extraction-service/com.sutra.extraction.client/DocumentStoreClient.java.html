@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>DocumentStoreClient.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">SUTRA extraction service</a> &gt; <a href="index.source.html" class="el_package">com.sutra.extraction.client</a> &gt; <span class="el_source">DocumentStoreClient.java</span></div><h1>DocumentStoreClient.java</h1><pre class="source lang-java linenums">package com.sutra.extraction.client;
+
+import com.sutra.api.document.DocumentContracts.InspectedFile;
+import com.sutra.common.client.InternalRestClients;
+import com.sutra.common.client.ServiceCall;
+import com.sutra.common.client.ServiceUrls;
+import org.springframework.core.io.ByteArrayResource;
+import org.springframework.http.MediaType;
+import org.springframework.stereotype.Component;
+import org.springframework.util.LinkedMultiValueMap;
+import org.springframework.util.MultiValueMap;
+import org.springframework.web.client.RestClient;
+
+/** The document service: stored quotation files, and the content check of files that are not stored. */
+@Component
+public class DocumentStoreClient {
+
+    private static final String SERVICE = &quot;document service&quot;;
+
+    private final RestClient client;
+
+<span class="nc" id="L22">    public DocumentStoreClient(InternalRestClients clients, ServiceUrls urls) {</span>
+<span class="nc" id="L23">        this.client = clients.forBaseUrl(urls.document());</span>
+<span class="nc" id="L24">    }</span>
+
+    /** The bytes of one stored file. */
+    public byte[] content(Long documentId) {
+<span class="nc" id="L28">        return ServiceCall.call(SERVICE, () -&gt; client.get().uri(&quot;/internal/documents/{id}/content&quot;, documentId)</span>
+<span class="nc" id="L29">                .retrieve().body(byte[].class));</span>
+    }
+
+    /**
+     * Checks a file's real content (type, magic bytes, Office structure, size) without storing it. A bad file is
+     * refused with the document service's own error (415 or 400 and its message).
+     */
+    public InspectedFile inspect(String fileName, byte[] bytes) {
+<span class="nc" id="L37">        MultiValueMap&lt;String, Object&gt; parts = new LinkedMultiValueMap&lt;&gt;();</span>
+<span class="nc" id="L38">        parts.add(&quot;file&quot;, new ByteArrayResource(bytes) {</span>
+            @Override
+            public String getFilename() {
+<span class="nc" id="L41">                return fileName;</span>
+            }
+        });
+<span class="nc" id="L44">        return ServiceCall.call(SERVICE, () -&gt; client.post().uri(&quot;/internal/documents/inspect&quot;)</span>
+<span class="nc" id="L45">                .contentType(MediaType.MULTIPART_FORM_DATA).body(parts).retrieve().body(InspectedFile.class));</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.13.202504020838</span></div></body></html>

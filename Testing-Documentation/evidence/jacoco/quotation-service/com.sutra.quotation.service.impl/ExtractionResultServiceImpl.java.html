@@ -1,0 +1,279 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>ExtractionResultServiceImpl.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">SUTRA quotation service</a> &gt; <a href="index.source.html" class="el_package">com.sutra.quotation.service.impl</a> &gt; <span class="el_source">ExtractionResultServiceImpl.java</span></div><h1>ExtractionResultServiceImpl.java</h1><pre class="source lang-java linenums">package com.sutra.quotation.service.impl;
+
+import com.sutra.api.enums.FlagSeverity;
+import com.sutra.api.enums.QuotationStatus;
+import com.sutra.api.extraction.ExtractedQuotation;
+import com.sutra.api.extraction.ExtractedQuotation.ExtractedItem;
+import com.sutra.api.internal.InternalContracts.ExtractionOutcome;
+import com.sutra.api.internal.InternalContracts.ExtractionWork;
+import com.sutra.api.internal.InternalContracts.LineMatch;
+import com.sutra.api.internal.InternalContracts.RequestedLine;
+import com.sutra.api.internal.InternalContracts.WorkDocument;
+import com.sutra.api.rfq.PurchaseRequestResponses.PurchaseRequestResponse;
+import com.sutra.api.rfq.PurchaseRequestResponses.RequestItemResponse;
+import com.sutra.api.rules.FlagCodes;
+import com.sutra.common.audit.AuditService;
+import com.sutra.common.error.DuplicateResourceException;
+import com.sutra.common.security.CurrentUserProvider;
+import com.sutra.quotation.client.RfqClient;
+import com.sutra.quotation.config.QuotationProperties;
+import com.sutra.quotation.entity.Quotation;
+import com.sutra.quotation.entity.QuotationFile;
+import com.sutra.quotation.entity.QuotationFlag;
+import com.sutra.quotation.entity.QuotationItem;
+import com.sutra.quotation.exception.QuotationNotFoundException;
+import com.sutra.quotation.repository.QuotationFileRepository;
+import com.sutra.quotation.repository.QuotationRepository;
+import com.sutra.quotation.service.ExtractionResultService;
+import com.sutra.quotation.service.internal.QuotationReviewService;
+import com.sutra.quotation.service.internal.TextSimilarity;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.math.BigDecimal;
+import java.math.RoundingMode;
+import java.time.Clock;
+import java.time.Instant;
+import java.time.LocalDate;
+import java.time.format.DateTimeParseException;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+import java.util.Optional;
+import java.util.Set;
+import java.util.stream.Collectors;
+
+import static com.sutra.common.audit.AuditService.details;
+
+/**
+ * The quotation side of reading (the extraction service does the reading itself):
+ * &lt;ol&gt;
+ *   &lt;li&gt;{@link #claim}: marks the quotation PROCESSING and returns its files and the RFQ's requested lines.&lt;/li&gt;
+ *   &lt;li&gt;{@link #receive}: stores the lines read (replacing earlier ones) with their matches, recalculates every
+ *       total in Java, raises the review flags and sets READY_FOR_COMPARISON or NEEDS_REVIEW; or, if reading
+ *       failed, FAILED with the reason (the files are untouched, so the user can retry or type the lines).&lt;/li&gt;
+ * &lt;/ol&gt;
+ */
+@Service
+@Transactional
+public class ExtractionResultServiceImpl implements ExtractionResultService {
+
+<span class="fc" id="L64">    private static final Logger log = LoggerFactory.getLogger(ExtractionResultServiceImpl.class);</span>
+
+    private final QuotationRepository quotationRepository;
+    private final QuotationFileRepository fileRepository;
+    private final RfqClient rfqs;
+    private final QuotationReviewService reviewService;
+    private final AuditService auditService;
+    private final BigDecimal reviewThreshold;
+    private final Clock clock;
+
+<span class="fc" id="L74">    public ExtractionResultServiceImpl(QuotationRepository quotationRepository, QuotationFileRepository fileRepository,</span>
+                                       RfqClient rfqs, QuotationReviewService reviewService, AuditService auditService,
+                                       QuotationProperties properties, Clock clock) {
+<span class="fc" id="L77">        this.quotationRepository = quotationRepository;</span>
+<span class="fc" id="L78">        this.fileRepository = fileRepository;</span>
+<span class="fc" id="L79">        this.rfqs = rfqs;</span>
+<span class="fc" id="L80">        this.reviewService = reviewService;</span>
+<span class="fc" id="L81">        this.auditService = auditService;</span>
+<span class="fc" id="L82">        this.reviewThreshold = properties.reviewConfidenceThreshold();</span>
+<span class="fc" id="L83">        this.clock = clock;</span>
+<span class="fc" id="L84">    }</span>
+
+    @Override
+    public ExtractionWork claim(Long quotationId) {
+<span class="fc" id="L88">        Quotation q = quotationRepository.findById(quotationId)</span>
+<span class="pc" id="L89">                .orElseThrow(() -&gt; new QuotationNotFoundException(quotationId));</span>
+<span class="fc bfc" id="L90" title="All 2 branches covered.">        if (q.getStatus() == QuotationStatus.PROCESSING) {</span>
+<span class="fc" id="L91">            throw new DuplicateResourceException(&quot;Quotation &quot; + quotationId + &quot; is already being read&quot;);</span>
+        }
+<span class="fc" id="L93">        List&lt;QuotationFile&gt; files = fileRepository.findByQuotationIdOrderByIdAsc(quotationId);</span>
+<span class="fc" id="L94">        PurchaseRequestResponse rfq = rfqs.get(q.getPurchaseRequestId());</span>
+<span class="fc" id="L95">        q.setStatus(QuotationStatus.PROCESSING);</span>
+<span class="fc" id="L96">        q.setProcessingAttempts(q.getProcessingAttempts() + 1);</span>
+<span class="fc" id="L97">        q.setFailureReason(null);</span>
+<span class="fc" id="L98">        List&lt;WorkDocument&gt; documents = files.stream()</span>
+<span class="fc" id="L99">                .map(f -&gt; new WorkDocument(f.getDocumentId(), f.getFileName(), f.getFileFormat())).toList();</span>
+<span class="fc" id="L100">        List&lt;RequestedLine&gt; lines = rfq.items().stream()</span>
+<span class="fc" id="L101">                .map(i -&gt; new RequestedLine(i.id(), i.lineNumber(), i.itemCode(), i.description(), i.quantity(),</span>
+<span class="fc" id="L102">                        i.unitOfMeasure(), i.specifications()))</span>
+<span class="fc" id="L103">                .toList();</span>
+<span class="fc" id="L104">        return new ExtractionWork(quotationId, q.getVendor().getName(), rfq.currency(), documents, lines);</span>
+    }
+
+    @Override
+    public void receive(Long quotationId, ExtractionOutcome outcome) {
+<span class="fc" id="L109">        Quotation q = quotationRepository.findById(quotationId).orElse(null);</span>
+<span class="pc bpc" id="L110" title="1 of 2 branches missed.">        if (q == null) {</span>
+<span class="nc" id="L111">            log.warn(&quot;Quotation {} disappeared before its reading arrived&quot;, quotationId);</span>
+<span class="nc" id="L112">            return;</span>
+        }
+<span class="fc bfc" id="L114" title="All 2 branches covered.">        if (!outcome.succeeded()) {</span>
+<span class="pc bpc" id="L115" title="1 of 2 branches missed.">            fail(q, outcome.failureReason() == null ? &quot;The quotation could not be read&quot; : outcome.failureReason());</span>
+<span class="fc" id="L116">            return;</span>
+        }
+<span class="fc" id="L118">        PurchaseRequestResponse rfq = rfqs.get(q.getPurchaseRequestId());</span>
+        // A (re)reading replaces all previous lines and flags.
+<span class="fc" id="L120">        q.getFlags().clear();</span>
+<span class="fc" id="L121">        q.getItems().clear();</span>
+<span class="fc" id="L122">        quotationRepository.flush();</span>
+<span class="fc" id="L123">        populate(q, rfq, outcome);</span>
+<span class="fc" id="L124">        quotationRepository.flush(); // assigns item ids before flagging</span>
+<span class="fc" id="L125">        q.setLastProcessedAt(Instant.now(clock));</span>
+<span class="fc" id="L126">        reviewService.revalidate(q, rfq);</span>
+<span class="fc" id="L127">        auditService.recordAs(CurrentUserProvider.SYSTEM_USER, QuotationServiceImpl.AUDIT_TYPE, quotationId, &quot;EXTRACTED&quot;,</span>
+<span class="fc" id="L128">                details(&quot;source&quot;, outcome.source(), &quot;model&quot;, outcome.model(), &quot;items&quot;, q.getItems().size(),</span>
+<span class="fc" id="L129">                        &quot;confidence&quot;, q.getExtractionConfidence(), &quot;status&quot;, q.getStatus(), &quot;openFlags&quot;, q.openFlagCount()));</span>
+<span class="fc" id="L130">    }</span>
+
+    private void fail(Quotation q, String reason) {
+<span class="fc" id="L133">        q.setStatus(QuotationStatus.FAILED);</span>
+<span class="pc bpc" id="L134" title="1 of 2 branches missed.">        q.setFailureReason(reason.length() &gt; 1000 ? reason.substring(0, 1000) : reason);</span>
+<span class="fc" id="L135">        q.setLastProcessedAt(Instant.now(clock));</span>
+<span class="fc" id="L136">        auditService.recordAs(CurrentUserProvider.SYSTEM_USER, QuotationServiceImpl.AUDIT_TYPE, q.getId(),</span>
+<span class="fc" id="L137">                &quot;EXTRACTION_FAILED&quot;, details(&quot;reason&quot;, q.getFailureReason(), &quot;attempt&quot;, q.getProcessingAttempts()));</span>
+<span class="fc" id="L138">        log.warn(&quot;Reading failed for quotation {}: {}&quot;, q.getId(), reason);</span>
+<span class="fc" id="L139">    }</span>
+
+    private void populate(Quotation q, PurchaseRequestResponse rfq, ExtractionOutcome outcome) {
+<span class="fc" id="L142">        ExtractedQuotation data = outcome.data();</span>
+<span class="fc" id="L143">        applyHeader(q, data);</span>
+<span class="fc" id="L144">        Set&lt;Long&gt; requestIds = rfq.items().stream().map(RequestItemResponse::id).collect(Collectors.toSet());</span>
+<span class="fc" id="L145">        Map&lt;Integer, LineMatch&gt; matchByIndex = new HashMap&lt;&gt;();</span>
+<span class="pc bpc" id="L146" title="1 of 4 branches missed.">        for (LineMatch m : outcome.matches() == null ? List.&lt;LineMatch&gt;of() : outcome.matches()) {</span>
+<span class="pc bpc" id="L147" title="1 of 4 branches missed.">            if (m.requestItemId() != null &amp;&amp; requestIds.contains(m.requestItemId())) {</span>
+<span class="fc" id="L148">                matchByIndex.put(m.index(), m);</span>
+            }
+        }
+<span class="fc" id="L151">        int line = 1;</span>
+<span class="fc bfc" id="L152" title="All 2 branches covered.">        for (int index = 0; index &lt; data.items().size(); index++) {</span>
+<span class="fc" id="L153">            ExtractedItem extracted = data.items().get(index);</span>
+<span class="pc bpc" id="L154" title="2 of 4 branches missed.">            if (extracted.description() == null || extracted.description().isBlank()) {</span>
+<span class="nc" id="L155">                q.addFlag(new QuotationFlag(null, &quot;items&quot;, FlagSeverity.WARNING, FlagCodes.EXTRACTOR_NOTE,</span>
+<span class="nc" id="L156">                        &quot;A priced line without a description was skipped; check the document&quot;));</span>
+<span class="nc" id="L157">                continue;</span>
+            }
+<span class="fc" id="L159">            QuotationItem item = toItem(line++, extracted);</span>
+<span class="fc" id="L160">            LineMatch match = matchByIndex.get(index);</span>
+<span class="fc bfc" id="L161" title="All 2 branches covered.">            if (match != null) {</span>
+<span class="fc" id="L162">                item.setRequestItemId(match.requestItemId());</span>
+<span class="pc bpc" id="L163" title="1 of 2 branches missed.">                item.setMatchConfidence(match.score() == null ? null : match.score().setScale(3, RoundingMode.HALF_UP));</span>
+            }
+<span class="fc" id="L165">            q.addItem(item);</span>
+        }
+<span class="fc" id="L167">        addExtractionFlags(q, data);</span>
+<span class="fc" id="L168">        q.setExtractionSource(outcome.source());</span>
+<span class="fc" id="L169">        q.setExtractionConfidence(confidence(data.overallConfidence()));</span>
+<span class="fc" id="L170">        q.setStatus(QuotationStatus.NEEDS_REVIEW);</span>
+<span class="fc" id="L171">    }</span>
+
+    private void applyHeader(Quotation q, ExtractedQuotation data) {
+<span class="fc" id="L174">        q.setQuotationNumber(truncate(data.quotationNumber().orElse(null), 60));</span>
+<span class="fc" id="L175">        q.setQuotationDate(parseDate(q, &quot;quotationDate&quot;, data.quotationDate()));</span>
+<span class="fc" id="L176">        LocalDate validUntil = parseDate(q, &quot;validUntil&quot;, data.validUntil());</span>
+<span class="pc bpc" id="L177" title="3 of 6 branches missed.">        if (validUntil != null &amp;&amp; q.getQuotationDate() != null &amp;&amp; validUntil.isBefore(q.getQuotationDate())) {</span>
+<span class="nc" id="L178">            q.addFlag(new QuotationFlag(null, &quot;validUntil&quot;, FlagSeverity.WARNING, FlagCodes.EXTRACTOR_NOTE,</span>
+<span class="nc" id="L179">                    &quot;Extracted validity date &quot; + validUntil + &quot; is before the quotation date and was ignored&quot;));</span>
+<span class="nc" id="L180">            validUntil = null;</span>
+        }
+<span class="fc" id="L182">        q.setValidUntil(validUntil);</span>
+<span class="fc" id="L183">        q.setCurrency(data.currency().map(c -&gt; c.trim().toUpperCase(Locale.ROOT))</span>
+<span class="fc" id="L184">                .filter(c -&gt; c.matches(&quot;^[A-Z]{3}$&quot;)).orElse(null));</span>
+<span class="fc" id="L185">        q.setStatedSubtotal(money(data.subtotal()));</span>
+<span class="fc" id="L186">        q.setStatedTaxTotal(money(data.taxTotal()));</span>
+<span class="fc" id="L187">        q.setStatedGrandTotal(money(data.grandTotal()));</span>
+<span class="fc" id="L188">        q.setDeliveryTerms(data.deliveryTerms().orElse(null));</span>
+<span class="fc" id="L189">        q.setPaymentTerms(data.paymentTerms().orElse(null));</span>
+<span class="fc" id="L190">        q.setWarrantyTerms(data.warrantyTerms().orElse(null));</span>
+<span class="fc" id="L191">        q.setNotes(data.notes().orElse(null));</span>
+<span class="fc" id="L192">    }</span>
+
+    private static QuotationItem toItem(int line, ExtractedItem e) {
+<span class="fc" id="L195">        QuotationItem item = new QuotationItem();</span>
+<span class="fc" id="L196">        item.setLineNumber(line);</span>
+<span class="fc" id="L197">        item.setItemCode(truncate(e.itemCode().orElse(null), 40));</span>
+<span class="fc" id="L198">        item.setDescription(truncate(e.description().trim(), 500));</span>
+<span class="fc" id="L199">        item.setQuantity(positive(e.quantity(), 3));</span>
+<span class="fc" id="L200">        item.setUnitOfMeasure(truncate(e.unitOfMeasure().orElse(null), 30));</span>
+<span class="fc" id="L201">        item.setUnitPrice(nonNegative(e.unitPrice(), 4));</span>
+<span class="fc" id="L202">        item.setDiscountPercent(percent(e.discountPercent()));</span>
+<span class="fc" id="L203">        item.setDiscountAmount(nonNegative(e.discountAmount(), 2));</span>
+<span class="fc" id="L204">        item.setTaxPercent(percent(e.taxPercent()));</span>
+<span class="fc" id="L205">        item.setTaxAmount(nonNegative(e.taxAmount(), 2));</span>
+<span class="fc" id="L206">        item.setStatedLineTotal(nonNegative(e.lineTotal(), 2));</span>
+<span class="fc" id="L207">        item.setExtractionConfidence(confidence(e.confidence()));</span>
+<span class="fc" id="L208">        item.setNotes(e.notes().orElse(null));</span>
+<span class="fc" id="L209">        return item;</span>
+    }
+
+    private void addExtractionFlags(Quotation q, ExtractedQuotation data) {
+<span class="pc bpc" id="L213" title="1 of 2 branches missed.">        if (q.getItems().isEmpty()) {</span>
+<span class="nc" id="L214">            q.addFlag(new QuotationFlag(null, &quot;items&quot;, FlagSeverity.ERROR, FlagCodes.NO_ITEMS_EXTRACTED,</span>
+<span class="nc" id="L215">                    &quot;No line items could be extracted. Add them manually.&quot;));</span>
+        }
+<span class="fc bfc" id="L217" title="All 2 branches covered.">        for (QuotationItem item : q.getItems()) {</span>
+<span class="pc bpc" id="L218" title="1 of 4 branches missed.">            if (item.getExtractionConfidence() != null &amp;&amp; item.getExtractionConfidence().compareTo(reviewThreshold) &lt; 0) {</span>
+<span class="fc" id="L219">                q.addFlag(new QuotationFlag(item, &quot;item&quot;, FlagSeverity.WARNING, FlagCodes.LOW_CONFIDENCE,</span>
+<span class="fc" id="L220">                        &quot;Line &quot; + item.getLineNumber() + &quot; was read with low confidence (&quot;</span>
+<span class="fc" id="L221">                                + item.getExtractionConfidence() + &quot;); compare it with the original document&quot;));</span>
+            }
+        }
+<span class="fc bfc" id="L224" title="All 2 branches covered.">        for (String warning : data.warnings()) {</span>
+<span class="pc bpc" id="L225" title="2 of 4 branches missed.">            if (warning != null &amp;&amp; !warning.isBlank()) {</span>
+<span class="fc" id="L226">                q.addFlag(new QuotationFlag(null, &quot;document&quot;, FlagSeverity.WARNING, FlagCodes.EXTRACTOR_NOTE,</span>
+<span class="fc" id="L227">                        &quot;Extractor note: &quot; + warning.trim()));</span>
+            }
+        }
+<span class="fc bfc" id="L230" title="All 2 branches covered.">        data.vendorName().filter(name -&gt; TextSimilarity.score(name, q.getVendor().getName()) &lt; 0.5)</span>
+<span class="fc" id="L231">                .ifPresent(name -&gt; q.addFlag(new QuotationFlag(null, &quot;vendor&quot;, FlagSeverity.WARNING,</span>
+<span class="fc" id="L232">                        FlagCodes.VENDOR_NAME_MISMATCH, &quot;The document names the vendor \&quot;&quot; + name</span>
+<span class="fc" id="L233">                        + &quot;\&quot;, but it was uploaded for \&quot;&quot; + q.getVendor().getName() + &quot;\&quot;&quot;)));</span>
+<span class="fc" id="L234">    }</span>
+
+    private LocalDate parseDate(Quotation q, String field, Optional&lt;String&gt; value) {
+<span class="pc bpc" id="L237" title="2 of 4 branches missed.">        if (value.isEmpty() || value.get().isBlank()) {</span>
+<span class="nc" id="L238">            return null;</span>
+        }
+        try {
+<span class="fc" id="L241">            return LocalDate.parse(value.get().trim());</span>
+<span class="nc" id="L242">        } catch (DateTimeParseException e) {</span>
+<span class="nc" id="L243">            q.addFlag(new QuotationFlag(null, field, FlagSeverity.WARNING, FlagCodes.EXTRACTOR_NOTE,</span>
+<span class="nc" id="L244">                    &quot;Could not read the &quot; + field + &quot; value '&quot; + truncate(value.get(), 40) + &quot;'; enter it manually&quot;));</span>
+<span class="nc" id="L245">            return null;</span>
+        }
+    }
+
+    private static BigDecimal money(Optional&lt;BigDecimal&gt; value) {
+<span class="fc" id="L250">        return nonNegative(value, 2);</span>
+    }
+
+    private static BigDecimal positive(Optional&lt;BigDecimal&gt; value, int scale) {
+<span class="fc bfc" id="L254" title="All 2 branches covered.">        return value.filter(v -&gt; v.signum() &gt; 0).map(v -&gt; v.setScale(scale, RoundingMode.HALF_UP)).orElse(null);</span>
+    }
+
+    private static BigDecimal nonNegative(Optional&lt;BigDecimal&gt; value, int scale) {
+<span class="pc bpc" id="L258" title="1 of 2 branches missed.">        return value.filter(v -&gt; v.signum() &gt;= 0).map(v -&gt; v.setScale(scale, RoundingMode.HALF_UP)).orElse(null);</span>
+    }
+
+    private static BigDecimal percent(Optional&lt;BigDecimal&gt; value) {
+<span class="pc bpc" id="L262" title="1 of 4 branches missed.">        return value.filter(v -&gt; v.signum() &gt;= 0 &amp;&amp; v.compareTo(BigDecimal.valueOf(100)) &lt;= 0)</span>
+<span class="fc" id="L263">                .map(v -&gt; v.setScale(4, RoundingMode.HALF_UP)).orElse(null);</span>
+    }
+
+    private static BigDecimal confidence(double value) {
+<span class="pc bpc" id="L267" title="1 of 2 branches missed.">        double clamped = Double.isNaN(value) ? 0 : Math.max(0, Math.min(1, value));</span>
+<span class="fc" id="L268">        return BigDecimal.valueOf(clamped).setScale(3, RoundingMode.HALF_UP);</span>
+    }
+
+    private static String truncate(String s, int max) {
+<span class="fc bfc" id="L272" title="All 2 branches covered.">        if (s == null) {</span>
+<span class="fc" id="L273">            return null;</span>
+        }
+<span class="fc" id="L275">        String t = s.trim();</span>
+<span class="pc bpc" id="L276" title="2 of 4 branches missed.">        return t.isEmpty() ? null : t.length() &lt;= max ? t : t.substring(0, max);</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.13.202504020838</span></div></body></html>

@@ -1,0 +1,157 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>QuotationValidator.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">SUTRA quotation service</a> &gt; <a href="index.source.html" class="el_package">com.sutra.quotation.service.internal</a> &gt; <span class="el_source">QuotationValidator.java</span></div><h1>QuotationValidator.java</h1><pre class="source lang-java linenums">package com.sutra.quotation.service.internal;
+
+import com.sutra.api.rfq.PurchaseRequestResponses.RequestItemResponse;
+import com.sutra.api.rfq.PurchaseRequestResponses.PurchaseRequestResponse;
+import com.sutra.quotation.config.QuotationProperties;
+import com.sutra.api.rules.FlagCodes;
+import com.sutra.api.rules.TermsCheck;
+import com.sutra.quotation.entity.Quotation;
+import com.sutra.quotation.entity.QuotationItem;
+import java.math.BigDecimal;
+import java.time.Clock;
+import java.time.LocalDate;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Locale;
+import java.util.Set;
+import java.util.stream.Collectors;
+import org.springframework.stereotype.Component;
+
+/**
+ * Checks a quotation against its purchase request: matching, missing items, quantities,
+ * currency, validity and commercial terms. Arithmetic is delegated to {@link QuotationCalculator}.
+ */
+@Component
+public class QuotationValidator {
+
+    private final QuotationCalculator calculator;
+    private final BigDecimal matchThreshold;
+    private final Clock clock;
+
+<span class="fc" id="L33">    public QuotationValidator(QuotationCalculator calculator, QuotationProperties properties, Clock clock) {</span>
+<span class="fc" id="L34">        this.calculator = calculator;</span>
+<span class="fc" id="L35">        this.matchThreshold = properties.matchConfidenceThreshold();</span>
+<span class="fc" id="L36">        this.clock = clock;</span>
+<span class="fc" id="L37">    }</span>
+
+    /** Recalculates totals and returns every validation flag for the quotation's current data. */
+    public List&lt;FlagDraft&gt; validate(Quotation quotation, PurchaseRequestResponse request) {
+<span class="fc" id="L41">        List&lt;FlagDraft&gt; flags = new ArrayList&lt;&gt;(calculator.recalculate(quotation));</span>
+
+<span class="fc" id="L43">        checkHeader(quotation, request, flags);</span>
+<span class="fc" id="L44">        checkItemMatches(quotation, request, flags);</span>
+<span class="fc" id="L45">        checkMissingRequestItems(quotation, request, flags);</span>
+<span class="fc" id="L46">        return flags;</span>
+    }
+
+    private void checkHeader(Quotation q, PurchaseRequestResponse request, List&lt;FlagDraft&gt; flags) {
+<span class="pc bpc" id="L50" title="1 of 2 branches missed.">        if (q.getCurrency() == null) {</span>
+<span class="nc" id="L51">            flags.add(FlagDraft.warning(null, &quot;currency&quot;, FlagCodes.MISSING_CURRENCY,</span>
+<span class="nc" id="L52">                    &quot;Currency is not stated; the request currency &quot; + request.currency() + &quot; is assumed&quot;));</span>
+<span class="pc bfc" id="L53" title="All 2 branches covered.">        } else if (!q.getCurrency().equals(request.currency())) {</span>
+<span class="fc" id="L54">            flags.add(FlagDraft.warning(null, &quot;currency&quot;, FlagCodes.CURRENCY_MISMATCH,</span>
+<span class="fc" id="L55">                    &quot;Quotation currency &quot; + q.getCurrency() + &quot; differs from the request currency &quot;</span>
+<span class="fc" id="L56">                            + request.currency() + &quot;; totals are not converted&quot;));</span>
+        }
+<span class="pc bpc" id="L58" title="1 of 2 branches missed.">        if (q.getValidUntil() == null) {</span>
+<span class="nc" id="L59">            flags.add(FlagDraft.warning(null, &quot;validUntil&quot;, FlagCodes.MISSING_VALIDITY,</span>
+<span class="nc" id="L60">                    &quot;Quotation validity date is missing&quot;));</span>
+<span class="pc bfc" id="L61" title="All 2 branches covered.">        } else if (q.getValidUntil().isBefore(LocalDate.now(clock))) {</span>
+<span class="fc" id="L62">            flags.add(FlagDraft.warning(null, &quot;validUntil&quot;, FlagCodes.VALIDITY_EXPIRED,</span>
+<span class="fc" id="L63">                    &quot;Quotation expired on &quot; + q.getValidUntil()));</span>
+        }
+<span class="fc bfc" id="L65" title="All 2 branches covered.">        if (isBlank(q.getPaymentTerms())) {</span>
+<span class="fc" id="L66">            flags.add(FlagDraft.info(null, &quot;paymentTerms&quot;, FlagCodes.MISSING_PAYMENT_TERMS,</span>
+<span class="fc" id="L67">                    &quot;Payment terms are not stated&quot;));</span>
+        }
+<span class="fc bfc" id="L69" title="All 2 branches covered.">        if (isBlank(q.getDeliveryTerms())) {</span>
+<span class="fc" id="L70">            flags.add(FlagDraft.info(null, &quot;deliveryTerms&quot;, FlagCodes.MISSING_DELIVERY_TERMS,</span>
+<span class="fc" id="L71">                    &quot;Delivery terms are not stated&quot;));</span>
+        }
+        // Terms the vendor explicitly left open (e.g. &quot;UPS warranty not specified&quot;) must be confirmed before award.
+<span class="fc" id="L74">        Map&lt;String, String&gt; terms = new LinkedHashMap&lt;&gt;();</span>
+<span class="fc" id="L75">        terms.put(&quot;deliveryTerms&quot;, q.getDeliveryTerms());</span>
+<span class="fc" id="L76">        terms.put(&quot;paymentTerms&quot;, q.getPaymentTerms());</span>
+<span class="fc" id="L77">        terms.put(&quot;warrantyTerms&quot;, q.getWarrantyTerms());</span>
+<span class="fc" id="L78">        terms.forEach((field, text) -&gt; TermsCheck.incomplete(text).ifPresent(sentence -&gt;</span>
+<span class="fc" id="L79">                flags.add(FlagDraft.warning(null, field, FlagCodes.INCOMPLETE_TERMS,</span>
+<span class="fc" id="L80">                        TermsCheck.label(field) + &quot; are incomplete: \&quot;&quot; + sentence + &quot;\&quot; - confirm with the vendor&quot;))));</span>
+<span class="fc bfc" id="L81" title="All 2 branches covered.">        for (String text : new String[] {q.getNotes(), q.getDeliveryTerms(), q.getPaymentTerms()}) {</span>
+<span class="fc" id="L82">            var conditional = TermsCheck.conditional(text);</span>
+<span class="fc bfc" id="L83" title="All 2 branches covered.">            if (conditional.isPresent()) {</span>
+<span class="fc" id="L84">                flags.add(FlagDraft.info(null, &quot;notes&quot;, FlagCodes.CONDITIONAL_TERMS,</span>
+<span class="fc" id="L85">                        &quot;Conditional offer: \&quot;&quot; + conditional.get() + &quot;\&quot;&quot;));</span>
+<span class="fc" id="L86">                break;</span>
+            }
+        }
+<span class="fc" id="L89">    }</span>
+
+    private void checkItemMatches(Quotation q, PurchaseRequestResponse request, List&lt;FlagDraft&gt; flags) {
+<span class="fc" id="L92">        Map&lt;Long, RequestItemResponse&gt; requested = request.items().stream()</span>
+<span class="fc" id="L93">                .collect(Collectors.toMap(RequestItemResponse::id, r -&gt; r));</span>
+<span class="fc bfc" id="L94" title="All 2 branches covered.">        for (QuotationItem item : q.getItems()) {</span>
+<span class="fc bfc" id="L95" title="All 2 branches covered.">            RequestItemResponse matched = item.getRequestItemId() == null ? null : requested.get(item.getRequestItemId());</span>
+<span class="fc bfc" id="L96" title="All 2 branches covered.">            if (matched == null) {</span>
+<span class="fc" id="L97">                flags.add(FlagDraft.warning(item, &quot;requestItem&quot;, FlagCodes.UNMATCHED_ITEM,</span>
+<span class="fc" id="L98">                        &quot;Line &quot; + item.getLineNumber() + &quot; (\&quot;&quot; + abbreviate(item.getDescription())</span>
+                                + &quot;\&quot;) does not match any requested item&quot;));
+<span class="fc" id="L100">                continue;</span>
+            }
+<span class="pc bpc" id="L102" title="1 of 4 branches missed.">            if (!item.isManuallyEdited() &amp;&amp; item.getMatchConfidence() != null</span>
+<span class="fc bfc" id="L103" title="All 2 branches covered.">                    &amp;&amp; item.getMatchConfidence().compareTo(matchThreshold) &lt; 0) {</span>
+<span class="fc" id="L104">                flags.add(FlagDraft.warning(item, &quot;requestItem&quot;, FlagCodes.LOW_MATCH_CONFIDENCE,</span>
+<span class="fc" id="L105">                        &quot;Line &quot; + item.getLineNumber() + &quot; was matched to request line &quot; + matched.lineNumber()</span>
+<span class="fc" id="L106">                                + &quot; with low confidence (&quot; + item.getMatchConfidence() + &quot;); please confirm&quot;));</span>
+            }
+<span class="fc bfc" id="L108" title="All 4 branches covered.">            if (item.getQuantity() != null &amp;&amp; item.getQuantity().compareTo(matched.quantity()) != 0) {</span>
+<span class="fc" id="L109">                flags.add(FlagDraft.warning(item, &quot;quantity&quot;, FlagCodes.QUANTITY_MISMATCH,</span>
+<span class="fc" id="L110">                        &quot;Line &quot; + item.getLineNumber() + &quot;: quoted quantity &quot;</span>
+<span class="fc" id="L111">                                + item.getQuantity().stripTrailingZeros().toPlainString() + &quot; differs from requested &quot;</span>
+<span class="fc" id="L112">                                + matched.quantity().stripTrailingZeros().toPlainString()));</span>
+            }
+<span class="fc bfc" id="L114" title="All 2 branches covered.">            if (item.getUnitOfMeasure() != null</span>
+<span class="pc bpc" id="L115" title="1 of 2 branches missed.">                    &amp;&amp; !normaliseUom(item.getUnitOfMeasure()).equals(normaliseUom(matched.unitOfMeasure()))) {</span>
+<span class="nc" id="L116">                flags.add(FlagDraft.info(item, &quot;unitOfMeasure&quot;, FlagCodes.UOM_MISMATCH,</span>
+<span class="nc" id="L117">                        &quot;Line &quot; + item.getLineNumber() + &quot;: unit '&quot; + item.getUnitOfMeasure()</span>
+<span class="nc" id="L118">                                + &quot;' differs from requested '&quot; + matched.unitOfMeasure() + &quot;'&quot;));</span>
+            }
+        }
+<span class="fc" id="L121">    }</span>
+
+    private void checkMissingRequestItems(Quotation q, PurchaseRequestResponse request, List&lt;FlagDraft&gt; flags) {
+<span class="fc" id="L124">        Set&lt;Long&gt; quoted = q.getItems().stream()</span>
+<span class="fc" id="L125">                .map(QuotationItem::getRequestItemId)</span>
+<span class="fc" id="L126">                .filter(java.util.Objects::nonNull)</span>
+<span class="fc" id="L127">                .collect(Collectors.toSet());</span>
+<span class="fc bfc" id="L128" title="All 2 branches covered.">        for (RequestItemResponse requested : request.items()) {</span>
+<span class="fc bfc" id="L129" title="All 2 branches covered.">            if (!quoted.contains(requested.id())) {</span>
+<span class="fc" id="L130">                flags.add(FlagDraft.warning(null, &quot;items&quot;, FlagCodes.MISSING_REQUEST_ITEM,</span>
+<span class="fc" id="L131">                        &quot;Requested line &quot; + requested.lineNumber() + &quot; (\&quot;&quot; + abbreviate(requested.description())</span>
+                                + &quot;\&quot;) is not quoted&quot;));
+            }
+        }
+<span class="fc" id="L135">    }</span>
+
+    /** Lower-case, strip punctuation and a trailing plural &quot;s&quot; so &quot;Nos.&quot; equals &quot;no&quot; and &quot;pcs&quot; equals &quot;pc&quot;. */
+    static String normaliseUom(String uom) {
+<span class="fc" id="L139">        String s = uom.toLowerCase(Locale.ROOT).replaceAll(&quot;[^a-z]&quot;, &quot;&quot;);</span>
+<span class="fc bfc" id="L140" title="All 4 branches covered.">        if (s.length() &gt; 2 &amp;&amp; s.endsWith(&quot;s&quot;)) {</span>
+<span class="fc" id="L141">            s = s.substring(0, s.length() - 1);</span>
+        }
+<span class="fc bfc" id="L143" title="All 2 branches covered.">        return switch (s) {</span>
+<span class="fc" id="L144">            case &quot;no&quot;, &quot;nos&quot;, &quot;number&quot;, &quot;unit&quot;, &quot;piece&quot;, &quot;pc&quot;, &quot;ea&quot;, &quot;each&quot;, &quot;pce&quot; -&gt; &quot;unit&quot;;</span>
+<span class="fc" id="L145">            default -&gt; s;</span>
+        };
+    }
+
+    private static boolean isBlank(String s) {
+<span class="fc bfc" id="L150" title="All 4 branches covered.">        return s == null || s.isBlank();</span>
+    }
+
+    private static String abbreviate(String s) {
+<span class="pc bpc" id="L154" title="1 of 2 branches missed.">        return s.length() &lt;= 60 ? s : s.substring(0, 57) + &quot;...&quot;;</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.13.202504020838</span></div></body></html>

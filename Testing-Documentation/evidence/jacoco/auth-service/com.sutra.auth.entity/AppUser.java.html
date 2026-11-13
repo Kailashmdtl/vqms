@@ -1,0 +1,80 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>AppUser.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">SUTRA auth service</a> &gt; <a href="index.source.html" class="el_package">com.sutra.auth.entity</a> &gt; <span class="el_source">AppUser.java</span></div><h1>AppUser.java</h1><pre class="source lang-java linenums">package com.sutra.auth.entity;
+
+import com.sutra.auth.entity.base.AuditableEntity;
+import com.sutra.common.security.RoleName;
+import com.sutra.common.security.SutraUserPrincipal;
+import jakarta.persistence.Column;
+import jakarta.persistence.Entity;
+import jakarta.persistence.FetchType;
+import jakarta.persistence.JoinColumn;
+import jakarta.persistence.JoinTable;
+import jakarta.persistence.ManyToMany;
+import jakarta.persistence.Table;
+import java.util.HashSet;
+import java.util.Set;
+import lombok.Getter;
+import lombok.Setter;
+
+@Entity
+@Table(name = &quot;app_user&quot;)
+@Getter
+@Setter
+<span class="fc" id="L22">public class AppUser extends AuditableEntity {</span>
+
+    @Column(nullable = false, unique = true, length = 60)
+    private String username;
+
+    @Column(nullable = false, unique = true)
+    private String email;
+
+    @Column(name = &quot;full_name&quot;, nullable = false, length = 150)
+    private String fullName;
+
+    @Column(name = &quot;password_hash&quot;, nullable = false, length = 100)
+    private String passwordHash;
+
+    @Column(nullable = false)
+<span class="fc" id="L37">    private boolean active = true;</span>
+
+    /** A vendor that signed up on the portal and is waiting for an administrator's approval (inactive until then). */
+    @Column(name = &quot;pending_approval&quot;, nullable = false)
+    private boolean pendingApproval;
+
+    /** Still on a known start-up password: the app makes the user choose a new one first. */
+    @Column(name = &quot;password_change_required&quot;, nullable = false)
+    private boolean passwordChangeRequired;
+
+    @ManyToMany(fetch = FetchType.EAGER)
+    @JoinTable(name = &quot;user_role&quot;,
+            joinColumns = @JoinColumn(name = &quot;user_id&quot;),
+            inverseJoinColumns = @JoinColumn(name = &quot;role_id&quot;))
+<span class="fc" id="L51">    private Set&lt;Role&gt; roles = new HashSet&lt;&gt;();</span>
+
+    /** The supplier a VENDOR user acts for (a master data vendor id); null for the company's own users. */
+    @Column(name = &quot;vendor_id&quot;)
+    private Long vendorId;
+
+    /** The vendor's name when the link was made, so users can be listed without calling master data. */
+    @Column(name = &quot;vendor_name&quot;, length = 200)
+    private String vendorName;
+
+    /** Raised on every change to roles, status or password; the gateway then refuses older tokens. */
+    @Column(name = &quot;token_version&quot;, nullable = false)
+    private long tokenVersion;
+
+    public void revokeTokens() {
+<span class="fc" id="L66">        tokenVersion++;</span>
+<span class="fc" id="L67">    }</span>
+
+    /** The user as Spring Security sees it at sign-in. */
+    public SutraUserPrincipal toPrincipal() {
+<span class="fc" id="L71">        Set&lt;RoleName&gt; names = new HashSet&lt;&gt;();</span>
+<span class="fc" id="L72">        roles.forEach(r -&gt; names.add(r.getName()));</span>
+<span class="fc" id="L73">        return new SutraUserPrincipal(getId(), username, passwordHash, active, names, vendorId, tokenVersion);</span>
+    }
+
+    public boolean hasRole(RoleName roleName) {
+<span class="pc bpc" id="L77" title="1 of 2 branches missed.">        return roles.stream().anyMatch(r -&gt; r.getName() == roleName);</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.13.202504020838</span></div></body></html>

@@ -1,0 +1,137 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>VendorSignupServiceImpl.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">SUTRA auth service</a> &gt; <a href="index.source.html" class="el_package">com.sutra.auth.service.impl</a> &gt; <span class="el_source">VendorSignupServiceImpl.java</span></div><h1>VendorSignupServiceImpl.java</h1><pre class="source lang-java linenums">package com.sutra.auth.service.impl;
+
+import com.sutra.auth.service.VendorSignupService;
+import static com.sutra.common.audit.AuditService.details;
+
+import com.sutra.auth.client.MasterDataClient;
+import com.sutra.auth.entity.AppUser;
+import com.sutra.auth.entity.VendorSignup;
+import com.sutra.auth.exception.UserNotFoundException;
+import com.sutra.auth.repository.AppUserRepository;
+import com.sutra.auth.repository.RoleRepository;
+import com.sutra.auth.repository.VendorSignupRepository;
+import com.sutra.auth.dto.request.AuthRequests.VendorSignupRequest;
+import com.sutra.auth.dto.response.UserResponses.SignupAccepted;
+import com.sutra.auth.dto.response.UserResponses.UserResponse;
+import com.sutra.auth.dto.response.UserResponses.VendorSignupResponse;
+import com.sutra.common.audit.AuditService;
+import com.sutra.common.error.BusinessRuleException;
+import com.sutra.common.error.DuplicateResourceException;
+import com.sutra.common.security.RoleName;
+import com.sutra.common.util.Text;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Locale;
+import java.util.Set;
+import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+/**
+ * Vendors sign up themselves on the portal; an administrator approves each one with a single click. Until then the
+ * login is inactive, so a stranger who signs up never sees the company's RFQs.
+ */
+@Service
+@Transactional
+public class VendorSignupServiceImpl implements VendorSignupService {
+
+    private final AppUserRepository userRepository;
+    private final RoleRepository roleRepository;
+    private final VendorSignupRepository signupRepository;
+    private final PasswordEncoder passwordEncoder;
+    private final MasterDataClient masterData;
+    private final AuditService auditService;
+
+<span class="fc" id="L45">    public VendorSignupServiceImpl(AppUserRepository userRepository, RoleRepository roleRepository,</span>
+                               VendorSignupRepository signupRepository, PasswordEncoder passwordEncoder,
+                               MasterDataClient masterData, AuditService auditService) {
+<span class="fc" id="L48">        this.userRepository = userRepository;</span>
+<span class="fc" id="L49">        this.roleRepository = roleRepository;</span>
+<span class="fc" id="L50">        this.signupRepository = signupRepository;</span>
+<span class="fc" id="L51">        this.passwordEncoder = passwordEncoder;</span>
+<span class="fc" id="L52">        this.masterData = masterData;</span>
+<span class="fc" id="L53">        this.auditService = auditService;</span>
+<span class="fc" id="L54">    }</span>
+
+    @Override
+    public SignupAccepted register(VendorSignupRequest request) {
+<span class="fc" id="L58">        String username = request.username().trim().toLowerCase(Locale.ROOT);</span>
+<span class="fc" id="L59">        String email = request.email().trim().toLowerCase(Locale.ROOT);</span>
+<span class="fc bfc" id="L60" title="All 2 branches covered.">        if (userRepository.existsByUsernameIgnoreCase(username)) {</span>
+<span class="fc" id="L61">            throw new DuplicateResourceException(&quot;Username &quot; + username + &quot; is already taken&quot;);</span>
+        }
+<span class="pc bpc" id="L63" title="1 of 2 branches missed.">        if (userRepository.existsByEmailIgnoreCase(email)) {</span>
+<span class="nc" id="L64">            throw new DuplicateResourceException(&quot;Email &quot; + email + &quot; is already registered&quot;);</span>
+        }
+<span class="fc" id="L66">        AppUser user = new AppUser();</span>
+<span class="fc" id="L67">        user.setUsername(username);</span>
+<span class="fc" id="L68">        user.setEmail(email);</span>
+<span class="fc" id="L69">        user.setFullName(request.contactPerson().trim());</span>
+<span class="fc" id="L70">        user.setPasswordHash(passwordEncoder.encode(request.password()));</span>
+<span class="fc" id="L71">        user.setActive(false);</span>
+<span class="fc" id="L72">        user.setPendingApproval(true);</span>
+<span class="fc" id="L73">        user.setRoles(new HashSet&lt;&gt;(roleRepository.findByNameIn(Set.of(RoleName.VENDOR))));</span>
+<span class="fc" id="L74">        user = userRepository.save(user);</span>
+
+<span class="fc" id="L76">        VendorSignup signup = new VendorSignup();</span>
+<span class="fc" id="L77">        signup.setUser(user);</span>
+<span class="fc" id="L78">        signup.setCompanyName(request.companyName().trim());</span>
+<span class="fc" id="L79">        signup.setContactPerson(Text.blankToNull(request.contactPerson()));</span>
+<span class="fc" id="L80">        signup.setPhone(Text.blankToNull(request.phone()));</span>
+<span class="fc" id="L81">        signup.setTaxNumber(Text.blankToNull(request.taxNumber()));</span>
+<span class="fc" id="L82">        signup.setAddress(Text.blankToNull(request.address()));</span>
+<span class="fc" id="L83">        signup.setWebsite(Text.blankToNull(request.website()));</span>
+<span class="fc" id="L84">        signupRepository.save(signup);</span>
+
+<span class="fc" id="L86">        auditService.recordAs(username, &quot;USER&quot;, user.getId(), &quot;VENDOR_SIGNUP&quot;,</span>
+<span class="fc" id="L87">                details(&quot;company&quot;, signup.getCompanyName()));</span>
+<span class="fc" id="L88">        return new SignupAccepted(username, &quot;Thank you. Your account for &quot; + signup.getCompanyName()</span>
+                + &quot; is waiting for approval by the SUTRA administrator. You can sign in as soon as it is approved.&quot;);
+    }
+
+    @Transactional(readOnly = true)
+    @Override
+    public List&lt;VendorSignupResponse&gt; pending() {
+<span class="nc" id="L95">        return signupRepository.findAllByOrderByCreatedAtAsc().stream().map(VendorSignupResponse::from).toList();</span>
+    }
+
+    /** Creates the vendor in master data, links the login to it and activates the login. */
+    @Override
+    public UserResponse approve(Long userId) {
+<span class="fc" id="L101">        VendorSignup signup = find(userId);</span>
+<span class="fc" id="L102">        AppUser user = signup.getUser();</span>
+<span class="fc" id="L103">        MasterDataClient.VendorSnapshot vendor = masterData.registerVendor(new MasterDataClient.NewVendor(</span>
+<span class="fc" id="L104">                signup.getCompanyName(), signup.getContactPerson(), user.getEmail(), signup.getPhone(),</span>
+<span class="fc" id="L105">                signup.getAddress(), signup.getTaxNumber(), signup.getWebsite()));</span>
+<span class="fc" id="L106">        user.setVendorId(vendor.id());</span>
+<span class="fc" id="L107">        user.setVendorName(vendor.name());</span>
+<span class="fc" id="L108">        user.setActive(true);</span>
+<span class="fc" id="L109">        user.setPendingApproval(false);</span>
+<span class="fc" id="L110">        user.revokeTokens();</span>
+<span class="fc" id="L111">        signupRepository.delete(signup);</span>
+<span class="fc" id="L112">        auditService.record(&quot;USER&quot;, user.getId(), &quot;VENDOR_APPROVED&quot;, details(&quot;username&quot;, user.getUsername(),</span>
+<span class="fc" id="L113">                &quot;vendor&quot;, vendor.name(), &quot;vendorCode&quot;, vendor.code()));</span>
+<span class="fc" id="L114">        return UserResponse.from(user);</span>
+    }
+
+    /** Deletes the waiting login and its details. */
+    @Override
+    public void reject(Long userId) {
+<span class="nc" id="L120">        VendorSignup signup = find(userId);</span>
+<span class="nc" id="L121">        AppUser user = signup.getUser();</span>
+<span class="nc" id="L122">        String company = signup.getCompanyName();</span>
+<span class="nc" id="L123">        signupRepository.delete(signup);</span>
+<span class="nc" id="L124">        userRepository.delete(user);</span>
+<span class="nc" id="L125">        auditService.record(&quot;USER&quot;, userId, &quot;VENDOR_REJECTED&quot;, details(&quot;username&quot;, user.getUsername(),</span>
+<span class="nc" id="L126">                &quot;company&quot;, company));</span>
+<span class="nc" id="L127">    }</span>
+
+    private VendorSignup find(Long userId) {
+<span class="pc bpc" id="L130" title="1 of 2 branches missed.">        if (!userRepository.existsById(userId)) {</span>
+<span class="nc" id="L131">            throw new UserNotFoundException(userId);</span>
+        }
+<span class="fc" id="L133">        return signupRepository.findByUserId(userId).orElseThrow(() -&gt;</span>
+<span class="fc" id="L134">                new BusinessRuleException(&quot;NO_PENDING_SIGNUP&quot;, &quot;This user has no vendor sign-up waiting for approval&quot;));</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.13.202504020838</span></div></body></html>

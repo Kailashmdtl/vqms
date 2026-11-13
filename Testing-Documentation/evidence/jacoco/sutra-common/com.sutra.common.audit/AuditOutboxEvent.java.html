@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>AuditOutboxEvent.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">SUTRA common</a> &gt; <a href="index.source.html" class="el_package">com.sutra.common.audit</a> &gt; <span class="el_source">AuditOutboxEvent.java</span></div><h1>AuditOutboxEvent.java</h1><pre class="source lang-java linenums">package com.sutra.common.audit;
+
+import jakarta.persistence.Column;
+import jakarta.persistence.Entity;
+import jakarta.persistence.GeneratedValue;
+import jakarta.persistence.GenerationType;
+import jakarta.persistence.Id;
+import jakarta.persistence.Table;
+import java.time.Instant;
+import java.util.UUID;
+import lombok.Getter;
+import lombok.Setter;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
+
+/**
+ * An audit event waiting to be delivered to the audit service (transactional outbox). It is written in the same
+ * transaction as the change it describes, so the two commit or roll back together.
+ */
+@Entity
+@Table(name = &quot;audit_outbox&quot;)
+@Getter
+@Setter
+<span class="fc" id="L24">public class AuditOutboxEvent {</span>
+
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
+
+    @Column(name = &quot;event_id&quot;, nullable = false, unique = true)
+<span class="fc" id="L31">    private UUID eventId = UUID.randomUUID();</span>
+
+    @Column(name = &quot;entity_type&quot;, nullable = false, length = 50)
+    private String entityType;
+
+    @Column(name = &quot;entity_id&quot;)
+    private Long entityId;
+
+    @Column(name = &quot;purchase_request_id&quot;)
+    private Long purchaseRequestId;
+
+    @Column(nullable = false, length = 50)
+    private String action;
+
+    @Column(name = &quot;performed_by&quot;, nullable = false, length = 60)
+    private String performedBy;
+
+    @Column(name = &quot;performed_at&quot;, nullable = false)
+<span class="fc" id="L49">    private Instant performedAt = Instant.now();</span>
+
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(columnDefinition = &quot;jsonb&quot;)
+    private String details;
+
+    @Column(name = &quot;correlation_id&quot;, length = 64)
+    private String correlationId;
+
+    AuditEventMessage toMessage(String service) {
+<span class="fc" id="L59">        return new AuditEventMessage(eventId, service, entityType, entityId, purchaseRequestId, action, performedBy,</span>
+<span class="fc" id="L60">                performedAt, details, correlationId);</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.13.202504020838</span></div></body></html>

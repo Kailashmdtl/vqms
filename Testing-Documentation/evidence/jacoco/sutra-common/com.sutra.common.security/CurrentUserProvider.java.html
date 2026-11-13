@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>CurrentUserProvider.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">SUTRA common</a> &gt; <a href="index.source.html" class="el_package">com.sutra.common.security</a> &gt; <span class="el_source">CurrentUserProvider.java</span></div><h1>CurrentUserProvider.java</h1><pre class="source lang-java linenums">package com.sutra.common.security;
+
+import com.sutra.common.error.ForbiddenOperationException;
+import java.util.Optional;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.stereotype.Component;
+
+/** Access to the authenticated caller from the service layer. Mockable in unit tests. */
+@Component
+<span class="nc" id="L11">public class CurrentUserProvider {</span>
+
+    public static final String SYSTEM_USER = &quot;system&quot;;
+
+    public Optional&lt;SutraUserPrincipal&gt; principal() {
+<span class="nc" id="L16">        Authentication auth = SecurityContextHolder.getContext().getAuthentication();</span>
+<span class="nc bnc" id="L17" title="All 4 branches missed.">        if (auth != null &amp;&amp; auth.getPrincipal() instanceof SutraUserPrincipal p) {</span>
+<span class="nc" id="L18">            return Optional.of(p);</span>
+        }
+<span class="nc" id="L20">        return Optional.empty();</span>
+    }
+
+    public SutraUserPrincipal requirePrincipal() {
+<span class="nc" id="L24">        return principal().orElseThrow(() -&gt; new ForbiddenOperationException(&quot;Authentication required&quot;));</span>
+    }
+
+    public String username() {
+<span class="nc" id="L28">        return principal().map(SutraUserPrincipal::getUsername).orElse(SYSTEM_USER);</span>
+    }
+
+    public boolean hasRole(RoleName role) {
+<span class="nc" id="L32">        return principal().map(p -&gt; p.hasRole(role)).orElse(false);</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.13.202504020838</span></div></body></html>

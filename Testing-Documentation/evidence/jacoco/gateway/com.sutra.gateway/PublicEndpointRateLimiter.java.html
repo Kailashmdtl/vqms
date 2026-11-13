@@ -1,0 +1,73 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>PublicEndpointRateLimiter.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">SUTRA API gateway</a> &gt; <a href="index.source.html" class="el_package">com.sutra.gateway</a> &gt; <span class="el_source">PublicEndpointRateLimiter.java</span></div><h1>PublicEndpointRateLimiter.java</h1><pre class="source lang-java linenums"><span class="fc" id="L1">package com.sutra.gateway;</span>
+
+import java.time.Clock;
+import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.stereotype.Component;
+
+/**
+ * Limits the two endpoints anyone can call without signing in - sign-in and vendor sign-up - to a number of
+ * requests per minute from one IP address (20 by default). It slows down password guessing and sign-up spam;
+ * signed-in work is not limited. Fixed one-minute windows, kept in memory (one gateway).
+ */
+@Component
+public class PublicEndpointRateLimiter {
+
+<span class="fc" id="L18">    static final Set&lt;String&gt; LIMITED_PATHS = Set.of(&quot;/api/auth/login&quot;, &quot;/api/auth/register-vendor&quot;);</span>
+
+    private final int perMinute;
+    private final Clock clock;
+<span class="fc" id="L22">    private final Map&lt;String, Window&gt; windows = new ConcurrentHashMap&lt;&gt;();</span>
+
+    private record Window(long minute, int count) {
+    }
+
+<span class="fc" id="L27">    public PublicEndpointRateLimiter(@Value(&quot;${sutra.gateway.public-rate-limit-per-minute:20}&quot;) int perMinute, Clock clock) {</span>
+<span class="fc" id="L28">        this.perMinute = perMinute;</span>
+<span class="fc" id="L29">        this.clock = clock;</span>
+<span class="fc" id="L30">    }</span>
+
+    /**
+     * The caller's address. Requests relayed by a proxy on this same computer (the Vite dev server, a local reverse
+     * proxy) carry the real address in X-Forwarded-For; that header is trusted only from such a local proxy. The proxy
+     * appends the address it saw to whatever the client sent, so only the LAST entry is trustworthy: a client cannot
+     * escape the limit by sending a made-up X-Forwarded-For of its own.
+     */
+    public static String clientAddress(jakarta.servlet.http.HttpServletRequest request) {
+<span class="fc" id="L39">        String remote = request.getRemoteAddr();</span>
+<span class="fc" id="L40">        String forwarded = request.getHeader(&quot;X-Forwarded-For&quot;);</span>
+<span class="pc bpc" id="L41" title="2 of 6 branches missed.">        boolean fromLocalProxy = &quot;127.0.0.1&quot;.equals(remote) || &quot;0:0:0:0:0:0:0:1&quot;.equals(remote) || &quot;::1&quot;.equals(remote);</span>
+<span class="pc bpc" id="L42" title="1 of 6 branches missed.">        if (fromLocalProxy &amp;&amp; forwarded != null &amp;&amp; !forwarded.isBlank()) {</span>
+<span class="fc" id="L43">            String[] hops = forwarded.split(&quot;,&quot;);</span>
+<span class="fc" id="L44">            return hops[hops.length - 1].trim();</span>
+        }
+<span class="fc" id="L46">        return remote;</span>
+    }
+
+    public boolean isLimited(String path) {
+<span class="fc" id="L50">        return LIMITED_PATHS.contains(path);</span>
+    }
+
+    /** Counts the request; false when this IP has used up its requests for this endpoint in the current minute. */
+    public boolean tryAcquire(String clientIp, String path) {
+<span class="fc" id="L55">        long minute = clock.millis() / 60_000;</span>
+<span class="pc bpc" id="L56" title="1 of 2 branches missed.">        if (windows.size() &gt; 10_000) {</span>
+<span class="nc bnc" id="L57" title="All 2 branches missed.">            windows.entrySet().removeIf(e -&gt; e.getValue().minute() &lt; minute); // drop old windows</span>
+        }
+<span class="fc" id="L59">        Window w = windows.merge(clientIp + &quot; &quot; + path, new Window(minute, 1),</span>
+<span class="fc bfc" id="L60" title="All 2 branches covered.">                (old, fresh) -&gt; old.minute() == minute ? new Window(minute, old.count() + 1) : fresh);</span>
+<span class="fc bfc" id="L61" title="All 2 branches covered.">        return w.count() &lt;= perMinute;</span>
+    }
+
+    /** Seconds until the current window ends (for the Retry-After header). */
+    public long secondsToReset() {
+<span class="fc" id="L66">        return 60 - (clock.millis() / 1000) % 60;</span>
+    }
+
+    public int perMinute() {
+<span class="nc" id="L70">        return perMinute;</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.13.202504020838</span></div></body></html>

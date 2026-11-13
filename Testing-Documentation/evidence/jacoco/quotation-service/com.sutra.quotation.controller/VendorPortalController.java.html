@@ -1,0 +1,83 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>VendorPortalController.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">SUTRA quotation service</a> &gt; <a href="index.source.html" class="el_package">com.sutra.quotation.controller</a> &gt; <span class="el_source">VendorPortalController.java</span></div><h1>VendorPortalController.java</h1><pre class="source lang-java linenums">package com.sutra.quotation.controller;
+
+import com.sutra.quotation.service.VendorPortalService;
+import com.sutra.quotation.dto.response.DownloadedFile;
+import com.sutra.common.security.Roles;
+import com.sutra.common.web.PageResponse;
+import com.sutra.api.quotation.VendorPortalResponses.RfqDetail;
+import com.sutra.api.quotation.VendorPortalResponses.RfqSummary;
+import com.sutra.api.quotation.VendorPortalResponses.VendorQuotation;
+import java.nio.charset.StandardCharsets;
+import java.util.List;
+import org.springframework.http.ContentDisposition;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.web.bind.annotation.DeleteMapping;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RequestPart;
+import org.springframework.web.bind.annotation.ResponseStatus;
+import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.multipart.MultipartFile;
+
+/** The vendor portal API. Only VENDOR logins; every answer is limited to the caller's own vendor. */
+@RestController
+@RequestMapping(&quot;/api/vendor-portal&quot;)
+@PreAuthorize(Roles.VENDOR)
+public class VendorPortalController {
+
+    private final VendorPortalService portal;
+
+<span class="fc" id="L37">    public VendorPortalController(VendorPortalService portal) {</span>
+<span class="fc" id="L38">        this.portal = portal;</span>
+<span class="fc" id="L39">    }</span>
+
+    /** RFQs open for quotations, plus those this vendor quoted on. */
+    @GetMapping(&quot;/rfqs&quot;)
+    public PageResponse&lt;RfqSummary&gt; rfqs(@RequestParam(defaultValue = &quot;0&quot;) int page,
+                                         @RequestParam(defaultValue = &quot;20&quot;) int size) {
+<span class="nc" id="L45">        return portal.rfqs(page, size);</span>
+    }
+
+    @GetMapping(&quot;/rfqs/{id}&quot;)
+    public RfqDetail rfq(@PathVariable Long id) {
+<span class="nc" id="L50">        return portal.rfq(id);</span>
+    }
+
+    /** Submits this vendor's quotation: one or more PDF, Excel or Word files read together. */
+    @PostMapping(path = &quot;/rfqs/{id}/quotations&quot;, consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    @ResponseStatus(HttpStatus.ACCEPTED)
+    public VendorQuotation submit(@PathVariable Long id, @RequestPart(&quot;files&quot;) List&lt;MultipartFile&gt; files) {
+<span class="fc" id="L57">        return portal.submit(id, files);</span>
+    }
+
+    @GetMapping(&quot;/quotations&quot;)
+    public List&lt;VendorQuotation&gt; myQuotations() {
+<span class="fc" id="L62">        return portal.myQuotations();</span>
+    }
+
+    @DeleteMapping(&quot;/quotations/{id}&quot;)
+    public ResponseEntity&lt;Void&gt; withdraw(@PathVariable Long id) {
+<span class="nc" id="L67">        portal.withdraw(id);</span>
+<span class="nc" id="L68">        return ResponseEntity.noContent().build();</span>
+    }
+
+    @GetMapping(&quot;/quotations/{id}/files/{fileId}&quot;)
+    public ResponseEntity&lt;byte[]&gt; download(@PathVariable Long id, @PathVariable Long fileId) {
+<span class="nc" id="L73">        DownloadedFile file = portal.download(id, fileId);</span>
+<span class="nc" id="L74">        return ResponseEntity.ok()</span>
+<span class="nc" id="L75">                .contentType(MediaType.parseMediaType(file.contentType()))</span>
+<span class="nc" id="L76">                .header(HttpHeaders.CONTENT_DISPOSITION, ContentDisposition.attachment()</span>
+<span class="nc" id="L77">                        .filename(file.fileName(), StandardCharsets.UTF_8).build().toString())</span>
+<span class="nc" id="L78">                .header(&quot;X-Content-Type-Options&quot;, &quot;nosniff&quot;)</span>
+<span class="nc" id="L79">                .contentLength(file.sizeBytes())</span>
+<span class="nc" id="L80">                .body(file.content());</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.13.202504020838</span></div></body></html>

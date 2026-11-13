@@ -1,0 +1,68 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>UsageClient.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">SUTRA master data service</a> &gt; <a href="index.source.html" class="el_package">com.sutra.masterdata.client</a> &gt; <span class="el_source">UsageClient.java</span></div><h1>UsageClient.java</h1><pre class="source lang-java linenums"><span class="pc" id="L1">package com.sutra.masterdata.client;</span>
+
+import com.sutra.common.client.InternalRestClients;
+import com.sutra.common.client.ServiceUrls;
+import com.sutra.common.error.ServiceUnavailableException;
+import org.springframework.stereotype.Component;
+import org.springframework.web.client.RestClient;
+import org.springframework.web.client.RestClientException;
+
+/**
+ * Asks the services that reference master data whether a record is still in use, before it may be deleted:
+ * the RFQ service (entities, sub-entities, customers), the quotation service (vendors) and auth (vendor logins). Fails safe: when a service cannot be
+ * asked, the delete is refused.
+ */
+@Component
+public class UsageClient {
+
+    /** How many purchase requests and quotations reference a record. */
+    public record Usage(long purchaseRequests, long quotations) {
+
+        public boolean inUse() {
+<span class="fc bfc" id="L22" title="All 4 branches covered.">            return purchaseRequests &gt; 0 || quotations &gt; 0;</span>
+        }
+    }
+
+    /** How many user logins are linked to a vendor. */
+    public record VendorLogins(long users) {
+    }
+
+    private final RestClient rfq;
+    private final RestClient quotation;
+    private final RestClient auth;
+
+<span class="nc" id="L34">    public UsageClient(InternalRestClients clients, ServiceUrls urls) {</span>
+<span class="nc" id="L35">        this.rfq = clients.forBaseUrl(urls.rfq());</span>
+<span class="nc" id="L36">        this.quotation = clients.forBaseUrl(urls.quotation());</span>
+<span class="nc" id="L37">        this.auth = clients.forBaseUrl(urls.auth());</span>
+<span class="nc" id="L38">    }</span>
+
+    /** {@code kind} is entities, sub-entities, customers or vendors. */
+    public Usage procurementUsage(String kind, Long id) {
+<span class="nc" id="L42">        boolean vendors = &quot;vendors&quot;.equals(kind);</span>
+<span class="nc bnc" id="L43" title="All 2 branches missed.">        RestClient owner = vendors ? quotation : rfq;</span>
+<span class="nc bnc" id="L44" title="All 2 branches missed.">        String service = vendors ? &quot;quotation service&quot; : &quot;RFQ service&quot;;</span>
+        try {
+<span class="nc" id="L46">            Usage usage = owner.get().uri(&quot;/internal/usage/{kind}/{id}&quot;, kind, id).retrieve().body(Usage.class);</span>
+<span class="nc bnc" id="L47" title="All 2 branches missed.">            if (usage == null) {</span>
+<span class="nc" id="L48">                throw new ServiceUnavailableException(service, null);</span>
+            }
+<span class="nc" id="L50">            return usage;</span>
+<span class="nc" id="L51">        } catch (RestClientException e) {</span>
+<span class="nc" id="L52">            throw new ServiceUnavailableException(service, e);</span>
+        }
+    }
+
+    public long vendorLogins(Long vendorId) {
+        try {
+<span class="nc" id="L58">            VendorLogins logins = auth.get().uri(&quot;/internal/vendors/{id}/logins&quot;, vendorId).retrieve().body(VendorLogins.class);</span>
+<span class="nc bnc" id="L59" title="All 2 branches missed.">            if (logins == null) {</span>
+<span class="nc" id="L60">                throw new ServiceUnavailableException(&quot;auth service&quot;, null);</span>
+            }
+<span class="nc" id="L62">            return logins.users();</span>
+<span class="nc" id="L63">        } catch (RestClientException e) {</span>
+<span class="nc" id="L64">            throw new ServiceUnavailableException(&quot;auth service&quot;, e);</span>
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.13.202504020838</span></div></body></html>

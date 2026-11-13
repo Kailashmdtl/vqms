@@ -1,0 +1,75 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>ProcurementClients.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">SUTRA approval service</a> &gt; <a href="index.source.html" class="el_package">com.sutra.approval.client</a> &gt; <span class="el_source">ProcurementClients.java</span></div><h1>ProcurementClients.java</h1><pre class="source lang-java linenums">package com.sutra.approval.client;
+
+import com.sutra.api.decision.DecisionResponses.ComparisonReportResponse;
+import com.sutra.api.enums.PurchaseRequestStatus;
+import com.sutra.api.internal.InternalContracts.StatusChange;
+import com.sutra.api.quotation.QuotationResponses.QuotationResponse;
+import com.sutra.api.rfq.PurchaseRequestResponses.PurchaseRequestResponse;
+import com.sutra.common.client.InternalRestClients;
+import com.sutra.common.client.RemoteServiceException;
+import com.sutra.common.client.ServiceCall;
+import com.sutra.common.client.ServiceUrls;
+import org.springframework.http.HttpStatus;
+import org.springframework.stereotype.Component;
+import org.springframework.web.client.RestClient;
+
+import java.util.Map;
+import java.util.Optional;
+
+/** The RFQ, comparison and quotation services, as the approval service uses them. */
+@Component
+public class ProcurementClients {
+
+    private final RestClient rfq;
+    private final RestClient comparison;
+    private final RestClient quotation;
+
+<span class="nc" id="L27">    public ProcurementClients(InternalRestClients clients, ServiceUrls urls) {</span>
+<span class="nc" id="L28">        this.rfq = clients.forBaseUrl(urls.rfq());</span>
+<span class="nc" id="L29">        this.comparison = clients.forBaseUrl(urls.comparison());</span>
+<span class="nc" id="L30">        this.quotation = clients.forBaseUrl(urls.quotation());</span>
+<span class="nc" id="L31">    }</span>
+
+    public PurchaseRequestResponse rfq(Long id) {
+<span class="nc" id="L34">        return ServiceCall.call(&quot;RFQ service&quot;, () -&gt; rfq.get().uri(&quot;/internal/rfqs/{id}&quot;, id)</span>
+<span class="nc" id="L35">                .retrieve().body(PurchaseRequestResponse.class));</span>
+    }
+
+    /** Moves the RFQ on behalf of {@code actor}; refused when it is no longer in {@code from}. */
+    public void changeStatus(Long rfqId, PurchaseRequestStatus from, PurchaseRequestStatus to, String actor,
+                             Map&lt;String, Object&gt; details) {
+<span class="nc" id="L41">        ServiceCall.run(&quot;RFQ service&quot;, () -&gt; rfq.post().uri(&quot;/internal/rfqs/{id}/status&quot;, rfqId)</span>
+<span class="nc" id="L42">                .body(new StatusChange(from, to, actor, details)).retrieve().toBodilessEntity());</span>
+<span class="nc" id="L43">    }</span>
+
+    /** The comparison report; 404 COMPARISON_REPORT_NOT_FOUND from the comparison service when it does not exist. */
+    public ComparisonReportResponse report(Long reportId) {
+<span class="nc" id="L47">        return ServiceCall.call(&quot;comparison service&quot;, () -&gt; comparison.get()</span>
+<span class="nc" id="L48">                .uri(&quot;/internal/comparisons/{id}&quot;, reportId).retrieve().body(ComparisonReportResponse.class));</span>
+    }
+
+    public Optional&lt;ComparisonReportResponse&gt; latestReport(Long rfqId) {
+        try {
+<span class="nc" id="L53">            return Optional.ofNullable(ServiceCall.call(&quot;comparison service&quot;, () -&gt; comparison.get()</span>
+<span class="nc" id="L54">                    .uri(&quot;/internal/rfqs/{id}/comparisons/latest&quot;, rfqId).retrieve().body(ComparisonReportResponse.class)));</span>
+<span class="nc" id="L55">        } catch (RemoteServiceException e) {</span>
+<span class="nc bnc" id="L56" title="All 2 branches missed.">            if (e.getStatus() == HttpStatus.NOT_FOUND) {</span>
+<span class="nc" id="L57">                return Optional.empty();</span>
+            }
+<span class="nc" id="L59">            throw e;</span>
+        }
+    }
+
+    /** True when a compared quotation changed after the report was generated. */
+    public boolean isStale(Long reportId) {
+<span class="nc" id="L65">        Boolean stale = ServiceCall.call(&quot;comparison service&quot;, () -&gt; comparison.get()</span>
+<span class="nc" id="L66">                .uri(&quot;/internal/comparisons/{id}/stale&quot;, reportId).retrieve().body(Boolean.class));</span>
+<span class="nc" id="L67">        return Boolean.TRUE.equals(stale);</span>
+    }
+
+    public QuotationResponse quotation(Long quotationId) {
+<span class="nc" id="L71">        return ServiceCall.call(&quot;quotation service&quot;, () -&gt; quotation.get().uri(&quot;/internal/quotations/{id}&quot;, quotationId)</span>
+<span class="nc" id="L72">                .retrieve().body(QuotationResponse.class));</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.13.202504020838</span></div></body></html>

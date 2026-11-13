@@ -1,0 +1,86 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>QuotationReviewService.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">SUTRA quotation service</a> &gt; <a href="index.source.html" class="el_package">com.sutra.quotation.service.internal</a> &gt; <span class="el_source">QuotationReviewService.java</span></div><h1>QuotationReviewService.java</h1><pre class="source lang-java linenums">package com.sutra.quotation.service.internal;
+
+import com.sutra.api.rfq.PurchaseRequestResponses.PurchaseRequestResponse;
+import com.sutra.api.rules.FlagCodes;
+import com.sutra.quotation.entity.Quotation;
+import com.sutra.quotation.entity.QuotationFlag;
+import com.sutra.api.enums.FlagSeverity;
+import com.sutra.api.enums.QuotationStatus;
+import java.util.List;
+import java.util.Objects;
+import java.util.Set;
+import java.util.stream.Collectors;
+import org.springframework.stereotype.Service;
+
+/**
+ * Recalculates a quotation and keeps its review flags current.
+ *
+ * &lt;ul&gt;
+ *   &lt;li&gt;Open validation flags are dropped and regenerated from the current data on every run.&lt;/li&gt;
+ *   &lt;li&gt;A flag a person already resolved is not raised again for the same item, field and code.&lt;/li&gt;
+ *   &lt;li&gt;Extraction flags (low confidence, extractor notes) stay until resolved or the item is edited.&lt;/li&gt;
+ * &lt;/ul&gt;
+ * A read quotation is READY_FOR_COMPARISON straight away; warnings and notes stay open as &quot;to check&quot; and are shown
+ * with the comparison. Only an open ERROR (a line without quantity or price, so no total can be calculated) or a
+ * quotation without lines keeps it in NEEDS_REVIEW.
+ */
+@Service
+public class QuotationReviewService {
+
+    private final QuotationValidator validator;
+
+<span class="fc" id="L32">    public QuotationReviewService(QuotationValidator validator) {</span>
+<span class="fc" id="L33">        this.validator = validator;</span>
+<span class="fc" id="L34">    }</span>
+
+    /** Must be called inside a transaction with the quotation's items, flags and request items loadable. */
+    public void revalidate(Quotation quotation, PurchaseRequestResponse rfq) {
+<span class="fc bfc" id="L38" title="All 4 branches covered.">        quotation.getFlags().removeIf(f -&gt; !f.isResolved() &amp;&amp; FlagCodes.VALIDATION_CODES.contains(f.getCode()));</span>
+
+<span class="fc" id="L40">        Set&lt;String&gt; acknowledged = quotation.getFlags().stream()</span>
+<span class="fc" id="L41">                .filter(QuotationFlag::isResolved)</span>
+<span class="fc bfc" id="L42" title="All 2 branches covered.">                .map(f -&gt; key(f.getCode(), f.getQuotationItem() == null ? null : f.getQuotationItem().getId(),</span>
+<span class="fc" id="L43">                        f.getFieldName()))</span>
+<span class="fc" id="L44">                .collect(Collectors.toSet());</span>
+
+<span class="fc" id="L46">        List&lt;FlagDraft&gt; drafts = validator.validate(quotation, rfq);</span>
+<span class="fc bfc" id="L47" title="All 2 branches covered.">        for (FlagDraft draft : drafts) {</span>
+<span class="fc bfc" id="L48" title="All 2 branches covered.">            Long itemId = draft.item() == null ? null : draft.item().getId();</span>
+<span class="pc bpc" id="L49" title="1 of 4 branches missed.">            if (itemId != null &amp;&amp; acknowledged.contains(key(draft.code(), itemId, draft.fieldName()))) {</span>
+<span class="nc" id="L50">                continue;</span>
+            }
+<span class="fc bfc" id="L52" title="All 4 branches covered.">            if (draft.item() == null &amp;&amp; acknowledged.contains(key(draft.code(), null, draft.fieldName()))) {</span>
+<span class="fc" id="L53">                continue;</span>
+            }
+<span class="fc" id="L55">            quotation.addFlag(new QuotationFlag(draft.item(), draft.fieldName(), draft.severity(), draft.code(),</span>
+<span class="fc" id="L56">                    draft.message()));</span>
+        }
+<span class="fc" id="L58">        updateStatus(quotation);</span>
+<span class="fc" id="L59">    }</span>
+
+    public void updateStatus(Quotation quotation) {
+        // A failed quotation stays FAILED until someone enters at least one line manually.
+<span class="pc bpc" id="L63" title="1 of 2 branches missed.">        if (quotation.getStatus() == QuotationStatus.PROCESSING</span>
+<span class="fc bfc" id="L64" title="All 4 branches covered.">                || (quotation.getStatus() == QuotationStatus.FAILED &amp;&amp; quotation.getItems().isEmpty())) {</span>
+<span class="fc" id="L65">            return;</span>
+        }
+<span class="pc bpc" id="L67" title="1 of 4 branches missed.">        quotation.setStatus(hasOpenErrors(quotation) || quotation.getItems().isEmpty()</span>
+<span class="fc" id="L68">                ? QuotationStatus.NEEDS_REVIEW</span>
+<span class="fc" id="L69">                : QuotationStatus.READY_FOR_COMPARISON);</span>
+<span class="fc" id="L70">    }</span>
+
+    public static boolean hasBlockingFlags(Quotation quotation) {
+<span class="fc" id="L73">        return quotation.getFlags().stream()</span>
+<span class="pc bpc" id="L74" title="2 of 4 branches missed.">                .anyMatch(f -&gt; !f.isResolved() &amp;&amp; f.getSeverity() != FlagSeverity.INFO);</span>
+    }
+
+    public static boolean hasOpenErrors(Quotation quotation) {
+<span class="fc" id="L78">        return quotation.getFlags().stream()</span>
+<span class="fc bfc" id="L79" title="All 4 branches covered.">                .anyMatch(f -&gt; !f.isResolved() &amp;&amp; f.getSeverity() == FlagSeverity.ERROR);</span>
+    }
+
+    private static String key(String code, Long itemId, String field) {
+<span class="fc" id="L83">        return code + &quot;|&quot; + Objects.toString(itemId, &quot;-&quot;) + &quot;|&quot; + field;</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.13.202504020838</span></div></body></html>

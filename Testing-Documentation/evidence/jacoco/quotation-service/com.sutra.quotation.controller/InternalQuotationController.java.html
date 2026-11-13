@@ -1,0 +1,139 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>InternalQuotationController.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">SUTRA quotation service</a> &gt; <a href="index.source.html" class="el_package">com.sutra.quotation.controller</a> &gt; <span class="el_source">InternalQuotationController.java</span></div><h1>InternalQuotationController.java</h1><pre class="source lang-java linenums">package com.sutra.quotation.controller;
+
+import com.sutra.api.enums.QuotationStatus;
+import com.sutra.api.internal.InternalContracts.ExtractionOutcome;
+import com.sutra.api.internal.InternalContracts.ExtractionWork;
+import com.sutra.api.internal.InternalContracts.RfqQuotationUsage;
+import com.sutra.api.internal.InternalContracts.StatusCounts;
+import com.sutra.api.internal.InternalContracts.Usage;
+import com.sutra.api.quotation.QuotationResponses.QuotationResponse;
+import com.sutra.quotation.repository.QuotationRepository;
+import com.sutra.quotation.service.ExtractionResultService;
+import com.sutra.quotation.service.QuotationService;
+import org.springframework.http.ResponseEntity;
+import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
+
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+
+/** Quotation data and reading results for the other services (service tokens only). */
+@RestController
+@RequestMapping(&quot;/internal&quot;)
+public class InternalQuotationController {
+
+    private final QuotationService quotations;
+    private final ExtractionResultService extraction;
+    private final QuotationRepository repository;
+
+<span class="fc" id="L36">    public InternalQuotationController(QuotationService quotations, ExtractionResultService extraction,</span>
+                                       QuotationRepository repository) {
+<span class="fc" id="L38">        this.quotations = quotations;</span>
+<span class="fc" id="L39">        this.extraction = extraction;</span>
+<span class="fc" id="L40">        this.repository = repository;</span>
+<span class="fc" id="L41">    }</span>
+
+    // ---------- the extraction service ----------
+
+    @PostMapping(&quot;/quotations/{id}/extraction/claim&quot;)
+    public ExtractionWork claim(@PathVariable Long id) {
+<span class="fc" id="L47">        return extraction.claim(id);</span>
+    }
+
+    @PostMapping(&quot;/quotations/{id}/extraction/result&quot;)
+    public ResponseEntity&lt;Void&gt; result(@PathVariable Long id, @RequestBody ExtractionOutcome outcome) {
+<span class="fc" id="L52">        extraction.receive(id, outcome);</span>
+<span class="fc" id="L53">        return ResponseEntity.noContent().build();</span>
+    }
+
+    // ---------- the RFQ service ----------
+
+    @GetMapping(&quot;/rfqs/{rfqId}/quotation-usage&quot;)
+    public RfqQuotationUsage usageForRfq(@PathVariable Long rfqId) {
+<span class="nc" id="L60">        return quotations.usageForRfq(rfqId);</span>
+    }
+
+    @PostMapping(&quot;/rfqs/{rfqId}/revalidate&quot;)
+    public ResponseEntity&lt;Void&gt; revalidate(@PathVariable Long rfqId) {
+<span class="nc" id="L65">        quotations.revalidateForRfq(rfqId);</span>
+<span class="nc" id="L66">        return ResponseEntity.noContent().build();</span>
+    }
+
+    // ---------- comparison and approval ----------
+
+    /** Every quotation of the RFQ, in full (the comparison service compares the ready ones). */
+    @GetMapping(&quot;/rfqs/{rfqId}/quotations&quot;)
+    @Transactional(readOnly = true)
+    public List&lt;QuotationResponse&gt; forRfq(@PathVariable Long rfqId) {
+<span class="nc" id="L75">        return repository.findByPurchaseRequestIdOrderByIdAsc(rfqId).stream().map(quotations::toResponse).toList();</span>
+    }
+
+    @GetMapping(&quot;/quotations/{id}&quot;)
+    @Transactional(readOnly = true)
+    public QuotationResponse get(@PathVariable Long id) {
+<span class="nc" id="L81">        return quotations.toResponse(quotations.find(id));</span>
+    }
+
+    /** Current versions (optimistic-lock counters), to tell whether a saved comparison is stale. */
+    @GetMapping(&quot;/quotations/versions&quot;)
+    @Transactional(readOnly = true)
+    public Map&lt;Long, Long&gt; versions(@RequestParam List&lt;Long&gt; ids) {
+<span class="nc" id="L88">        Map&lt;Long, Long&gt; versions = new LinkedHashMap&lt;&gt;();</span>
+<span class="nc" id="L89">        repository.findAllById(ids).forEach(q -&gt; versions.put(q.getId(), q.getVersion()));</span>
+<span class="nc" id="L90">        return versions;</span>
+    }
+
+    // ---------- reporting, master data and users ----------
+
+    @GetMapping(&quot;/quotations/stats&quot;)
+    @Transactional(readOnly = true)
+    public StatusCounts stats() {
+<span class="nc" id="L98">        Map&lt;String, Long&gt; counts = new LinkedHashMap&lt;&gt;();</span>
+<span class="nc bnc" id="L99" title="All 2 branches missed.">        for (QuotationStatus s : QuotationStatus.values()) {</span>
+<span class="nc" id="L100">            counts.put(s.name(), repository.countByStatus(s));</span>
+        }
+<span class="nc" id="L102">        return new StatusCounts(counts);</span>
+    }
+
+    /** Of the given RFQs, those with at least one quotation ready to compare (menu badges). */
+    @GetMapping(&quot;/rfqs/with-ready-quotations&quot;)
+    @Transactional(readOnly = true)
+    public List&lt;Long&gt; withReadyQuotations(@RequestParam List&lt;Long&gt; rfqIds) {
+<span class="nc bnc" id="L109" title="All 2 branches missed.">        return rfqIds.isEmpty() ? List.of() : repository.findRfqIdsWithReadyQuotations(rfqIds);</span>
+    }
+
+    /** A vendor's quotations and their RFQs (menu badges). */
+    @GetMapping(&quot;/vendors/{vendorId}/quotation-refs&quot;)
+    @Transactional(readOnly = true)
+    public List&lt;com.sutra.api.internal.InternalContracts.QuotationRef&gt; quotationsOf(@PathVariable Long vendorId) {
+<span class="nc" id="L116">        return repository.findByVendorIdOrderByIdDesc(vendorId).stream()</span>
+<span class="nc" id="L117">                .map(q -&gt; new com.sutra.api.internal.InternalContracts.QuotationRef(q.getId(), q.getPurchaseRequestId()))</span>
+<span class="nc" id="L118">                .toList();</span>
+    }
+
+    /** {@code kind}: vendors or users. */
+    @GetMapping(&quot;/usage/{kind}/{id}&quot;)
+    @Transactional(readOnly = true)
+    public ResponseEntity&lt;Usage&gt; usage(@PathVariable String kind, @PathVariable Long id) {
+<span class="nc bnc" id="L125" title="All 3 branches missed.">        return switch (kind) {</span>
+<span class="nc" id="L126">            case &quot;vendors&quot; -&gt; ResponseEntity.ok(new Usage(0, repository.countByVendorId(id)));</span>
+<span class="nc" id="L127">            case &quot;users&quot; -&gt; ResponseEntity.ok(new Usage(0, repository.countByUploadedById(id)));</span>
+<span class="nc" id="L128">            default -&gt; ResponseEntity.notFound().build();</span>
+        };
+    }
+
+    /** An RFQ's quotations as its quotation list shows them (reporting: the assistant). */
+    @GetMapping(&quot;/rfqs/{rfqId}/quotation-summaries&quot;)
+    @Transactional(readOnly = true)
+    public List&lt;com.sutra.api.quotation.QuotationResponses.QuotationSummary&gt; summaries(@PathVariable Long rfqId) {
+<span class="nc" id="L136">        return quotations.listForRequest(rfqId);</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.13.202504020838</span></div></body></html>

@@ -1,0 +1,116 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>AuthServiceImpl.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">SUTRA auth service</a> &gt; <a href="index.source.html" class="el_package">com.sutra.auth.service.impl</a> &gt; <span class="el_source">AuthServiceImpl.java</span></div><h1>AuthServiceImpl.java</h1><pre class="source lang-java linenums">package com.sutra.auth.service.impl;
+
+import com.sutra.auth.service.AuthService;
+import com.sutra.common.audit.AuditService;
+
+import static com.sutra.common.audit.AuditService.details;
+
+import com.sutra.auth.entity.AppUser;
+import com.sutra.auth.exception.AccountLockedException;
+import com.sutra.common.error.BusinessRuleException;
+import com.sutra.auth.repository.AppUserRepository;
+import com.sutra.auth.dto.request.AuthRequests.ChangePasswordRequest;
+import com.sutra.auth.dto.request.AuthRequests.LoginRequest;
+import com.sutra.auth.dto.response.UserResponses.AuthResponse;
+import com.sutra.auth.dto.response.UserResponses.UserResponse;
+import com.sutra.common.security.CurrentUserProvider;
+import com.sutra.common.security.JwtCodec;
+import com.sutra.auth.service.internal.LoginAttemptService;
+import com.sutra.common.security.SutraUserPrincipal;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.security.authentication.AuthenticationManager;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.AuthenticationException;
+import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+@Service
+public class AuthServiceImpl implements AuthService {
+
+<span class="fc" id="L33">    private static final Logger log = LoggerFactory.getLogger(AuthService.class);</span>
+
+    private final AuthenticationManager authenticationManager;
+    private final JwtCodec jwt;
+    private final AppUserRepository userRepository;
+    private final PasswordEncoder passwordEncoder;
+    private final CurrentUserProvider currentUser;
+    private final AuditService auditService;
+    private final LoginAttemptService loginAttempts;
+
+<span class="fc" id="L43">    public AuthServiceImpl(AuthenticationManager authenticationManager, JwtCodec jwt,</span>
+                       AppUserRepository userRepository, PasswordEncoder passwordEncoder,
+                       CurrentUserProvider currentUser, AuditService auditService,
+                       LoginAttemptService loginAttempts) {
+<span class="fc" id="L47">        this.authenticationManager = authenticationManager;</span>
+<span class="fc" id="L48">        this.jwt = jwt;</span>
+<span class="fc" id="L49">        this.userRepository = userRepository;</span>
+<span class="fc" id="L50">        this.passwordEncoder = passwordEncoder;</span>
+<span class="fc" id="L51">        this.currentUser = currentUser;</span>
+<span class="fc" id="L52">        this.auditService = auditService;</span>
+<span class="fc" id="L53">        this.loginAttempts = loginAttempts;</span>
+<span class="fc" id="L54">    }</span>
+
+    /** Failed and blocked attempts are audited too, so the audit entry must survive the exception. */
+    @Transactional(noRollbackFor = {AuthenticationException.class, AccountLockedException.class})
+    @Override
+    public AuthResponse login(LoginRequest request) {
+<span class="fc" id="L60">        String username = request.username().trim();</span>
+        try {
+<span class="fc" id="L62">            loginAttempts.requireNotLocked(username);</span>
+<span class="fc" id="L63">        } catch (AccountLockedException e) {</span>
+<span class="fc" id="L64">            auditService.recordAs(username, &quot;USER&quot;, null, &quot;LOGIN_BLOCKED&quot;, null);</span>
+<span class="fc" id="L65">            throw e;</span>
+        }
+        // A vendor that signed up but is not approved yet gets a clear answer (only with the right password)
+<span class="fc" id="L68">        userRepository.findByUsernameIgnoreCase(username)</span>
+<span class="fc" id="L69">                .filter(AppUser::isPendingApproval)</span>
+<span class="pc" id="L70">                .filter(u -&gt; passwordEncoder.matches(request.password(), u.getPasswordHash()))</span>
+<span class="fc" id="L71">                .ifPresent(u -&gt; {</span>
+<span class="nc" id="L72">                    throw new BusinessRuleException(&quot;PENDING_APPROVAL&quot;, &quot;Your vendor account is waiting for approval &quot;</span>
+                            + &quot;by the SUTRA administrator. You can sign in as soon as it is approved.&quot;);
+                });
+        Authentication auth;
+        try {
+<span class="fc" id="L77">            auth = authenticationManager.authenticate(new UsernamePasswordAuthenticationToken(username, request.password()));</span>
+<span class="fc" id="L78">        } catch (AuthenticationException e) {</span>
+<span class="fc" id="L79">            boolean locked = loginAttempts.recordFailure(username);</span>
+<span class="fc bfc" id="L80" title="All 2 branches covered.">            auditService.recordAs(username, &quot;USER&quot;, null, locked ? &quot;ACCOUNT_LOCKED&quot; : &quot;LOGIN_FAILED&quot;, null);</span>
+<span class="fc bfc" id="L81" title="All 2 branches covered.">            if (locked) {</span>
+<span class="fc" id="L82">                log.warn(&quot;Sign-in locked for a user after repeated failures&quot;);</span>
+            }
+<span class="fc" id="L84">            throw e;</span>
+        }
+<span class="fc" id="L86">        loginAttempts.recordSuccess(username);</span>
+<span class="fc" id="L87">        SutraUserPrincipal principal = (SutraUserPrincipal) auth.getPrincipal();</span>
+<span class="fc" id="L88">        String token = jwt.issue(principal);</span>
+<span class="fc" id="L89">        AppUser user = userRepository.findById(principal.getId()).orElseThrow();</span>
+<span class="fc" id="L90">        auditService.recordAs(user.getUsername(), &quot;USER&quot;, user.getId(), &quot;LOGIN&quot;, null);</span>
+<span class="fc" id="L91">        return new AuthResponse(token, jwt.verify(token).orElseThrow().expiresAt(), UserResponse.from(user));</span>
+    }
+
+    @Transactional(readOnly = true)
+    @Override
+    public UserResponse me() {
+<span class="nc" id="L97">        return UserResponse.from(userRepository.findById(currentUser.requirePrincipal().getId()).orElseThrow());</span>
+    }
+
+    @Transactional
+    @Override
+    public void changePassword(ChangePasswordRequest request) {
+<span class="fc" id="L103">        AppUser user = userRepository.findById(currentUser.requirePrincipal().getId()).orElseThrow();</span>
+<span class="pc bpc" id="L104" title="1 of 2 branches missed.">        if (!passwordEncoder.matches(request.currentPassword(), user.getPasswordHash())) {</span>
+<span class="nc" id="L105">            throw new BusinessRuleException(&quot;INVALID_CURRENT_PASSWORD&quot;, &quot;Current password is incorrect&quot;);</span>
+        }
+<span class="pc bpc" id="L107" title="1 of 2 branches missed.">        if (request.currentPassword().equals(request.newPassword())) {</span>
+<span class="nc" id="L108">            throw new BusinessRuleException(&quot;PASSWORD_UNCHANGED&quot;, &quot;The new password must differ from the current one&quot;);</span>
+        }
+<span class="fc" id="L110">        user.setPasswordHash(passwordEncoder.encode(request.newPassword()));</span>
+<span class="fc" id="L111">        user.setPasswordChangeRequired(false);</span>
+<span class="fc" id="L112">        user.revokeTokens(); // other sessions must sign in again with the new password</span>
+<span class="fc" id="L113">        auditService.record(&quot;USER&quot;, user.getId(), &quot;PASSWORD_CHANGED&quot;, details());</span>
+<span class="fc" id="L114">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.13.202504020838</span></div></body></html>

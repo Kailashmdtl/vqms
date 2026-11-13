@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>PurchaseRequestMapper.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">SUTRA rfq service</a> &gt; <a href="index.source.html" class="el_package">com.sutra.rfq.mapper</a> &gt; <span class="el_source">PurchaseRequestMapper.java</span></div><h1>PurchaseRequestMapper.java</h1><pre class="source lang-java linenums">package com.sutra.rfq.mapper;
+
+import com.sutra.api.rfq.PurchaseRequestResponses.PurchaseRequestResponse;
+import com.sutra.api.rfq.PurchaseRequestResponses.PurchaseRequestSummary;
+import com.sutra.api.rfq.PurchaseRequestResponses.RequestItemResponse;
+import com.sutra.rfq.entity.PurchaseRequest;
+import com.sutra.rfq.entity.RequestItem;
+
+/** Maps this service's entities to the API records of {@code PurchaseRequestResponses}. */
+public final class PurchaseRequestMapper {
+
+    private PurchaseRequestMapper() {
+    }
+
+    public static PurchaseRequestResponse purchaseRequestResponse(PurchaseRequest p) {
+<span class="fc" id="L16">        return new PurchaseRequestResponse(p.getId(), p.getRequestNumber(), p.getTitle(), p.getDescription(),</span>
+<span class="fc" id="L17">                p.getStatus(), p.getEntity().getId(), p.getEntity().getName(),</span>
+<span class="pc bpc" id="L18" title="1 of 2 branches missed.">                p.getSubEntity() == null ? null : p.getSubEntity().getId(),</span>
+<span class="pc bpc" id="L19" title="1 of 2 branches missed.">                p.getSubEntity() == null ? null : p.getSubEntity().getName(),</span>
+<span class="pc bpc" id="L20" title="1 of 2 branches missed.">                p.getCustomer() == null ? null : p.getCustomer().getId(),</span>
+<span class="pc bpc" id="L21" title="1 of 2 branches missed.">                p.getCustomer() == null ? null : p.getCustomer().getName(),</span>
+<span class="fc" id="L22">                p.getRequestedBy().getId(), p.getRequestedBy().getUsername(), p.getCurrency(),</span>
+<span class="fc" id="L23">                p.getRequiredBy(), p.isEditable(),</span>
+<span class="fc" id="L24">                p.getItems().stream().map(PurchaseRequestMapper::requestItemResponse).toList(),</span>
+<span class="fc" id="L25">                p.getCreatedAt(), p.getUpdatedAt(), p.getQuotationsDue());</span>
+    }
+
+    public static PurchaseRequestSummary purchaseRequestSummary(PurchaseRequest p) {
+<span class="nc" id="L29">        return new PurchaseRequestSummary(p.getId(), p.getRequestNumber(), p.getTitle(), p.getStatus(),</span>
+<span class="nc" id="L30">                p.getEntity().getName(), p.getRequestedBy().getUsername(), p.getCurrency(), p.getRequiredBy(),</span>
+<span class="nc" id="L31">                p.getItems().size(), p.getCreatedAt(), p.getQuotationsDue());</span>
+    }
+
+    public static RequestItemResponse requestItemResponse(RequestItem i) {
+<span class="fc" id="L35">        return new RequestItemResponse(i.getId(), i.getLineNumber(), i.getItemCode(), i.getDescription(),</span>
+<span class="fc" id="L36">                i.getQuantity(),</span>
+<span class="fc" id="L37">                i.getUnitOfMeasure(), i.getSpecifications());</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.13.202504020838</span></div></body></html>

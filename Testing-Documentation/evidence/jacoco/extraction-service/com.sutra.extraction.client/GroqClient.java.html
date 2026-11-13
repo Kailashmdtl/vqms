@@ -1,0 +1,254 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>GroqClient.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">SUTRA extraction service</a> &gt; <a href="index.source.html" class="el_package">com.sutra.extraction.client</a> &gt; <span class="el_source">GroqClient.java</span></div><h1>GroqClient.java</h1><pre class="source lang-java linenums"><span class="fc" id="L1">package com.sutra.extraction.client;</span>
+
+import com.sutra.extraction.config.ExtractionProperties;
+import com.sutra.extraction.config.AiProperties;
+import com.sutra.extraction.exception.AiServiceException;
+import java.net.http.HttpClient;
+import java.time.Duration;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.http.MediaType;
+import org.springframework.http.client.JdkClientHttpRequestFactory;
+import org.springframework.stereotype.Component;
+import org.springframework.web.client.HttpClientErrorException;
+import org.springframework.web.client.HttpServerErrorException;
+import org.springframework.web.client.ResourceAccessException;
+import org.springframework.web.client.RestClient;
+import org.springframework.web.client.RestClientException;
+import tools.jackson.databind.JsonNode;
+
+/**
+ * Thin client for Groq's OpenAI-compatible chat API ({@code POST /chat/completions}), shared by quotation
+ * extraction and the assistant. The API key is never logged.
+ *
+ * &lt;p&gt;Each free-tier Groq model has its own rate limit. When the configured model is still rate-limited after the
+ * retries, the request moves on to the next model in {@code sutra.extraction.groq-fallback-models}.&lt;/p&gt;
+ */
+@Component
+public class GroqClient {
+
+    /** Above this, document text is not truncated; the caller reports it instead (models have a 131k-token window). */
+    public static final int MAX_TEXT_CHARS = 300_000;
+
+    /** Attempts per model, including the first. */
+    static final int MAX_ATTEMPTS = 3;
+<span class="fc" id="L40">    private static final Duration MAX_RETRY_WAIT = Duration.ofSeconds(30);</span>
+<span class="fc" id="L41">    private static final Logger log = LoggerFactory.getLogger(GroqClient.class);</span>
+
+    private final AiProperties.Groq config;
+    private final RestClient restClient;
+    private final Duration retryDelay;
+    /** The configured model first, then the free fallback models. */
+    private final List&lt;String&gt; models;
+
+    @Autowired
+    public GroqClient(AiProperties properties, ExtractionProperties extraction, RestClient.Builder builder) {
+<span class="nc" id="L51">        this(properties.ai().groq(), buildClient(properties.ai().groq(), builder), Duration.ofSeconds(2),</span>
+<span class="nc" id="L52">                extraction.groqFallbackModels());</span>
+<span class="nc" id="L53">    }</span>
+
+    /** For tests: a RestClient bound to a mock server, a short retry delay and optional fallback models. */
+<span class="fc" id="L56">    public GroqClient(AiProperties.Groq config, RestClient restClient, Duration retryDelay, List&lt;String&gt; fallbackModels) {</span>
+<span class="fc" id="L57">        this.config = config;</span>
+<span class="fc" id="L58">        this.restClient = restClient;</span>
+<span class="fc" id="L59">        this.retryDelay = retryDelay;</span>
+<span class="fc" id="L60">        List&lt;String&gt; all = new ArrayList&lt;&gt;();</span>
+<span class="fc" id="L61">        all.add(config.model());</span>
+<span class="pc bpc" id="L62" title="1 of 2 branches missed.">        fallbackModels.stream().filter(m -&gt; !all.contains(m)).forEach(all::add);</span>
+<span class="fc" id="L63">        this.models = List.copyOf(all);</span>
+<span class="fc" id="L64">    }</span>
+
+    private static RestClient buildClient(AiProperties.Groq config, RestClient.Builder builder) {
+<span class="nc" id="L67">        JdkClientHttpRequestFactory factory = new JdkClientHttpRequestFactory(</span>
+<span class="nc" id="L68">                HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(10)).build());</span>
+<span class="nc" id="L69">        factory.setReadTimeout(Duration.ofSeconds(config.timeoutSeconds()));</span>
+<span class="nc" id="L70">        return builder.clone().baseUrl(config.baseUrl()).requestFactory(factory).build();</span>
+    }
+
+    public boolean isConfigured() {
+<span class="fc" id="L74">        return config.isConfigured();</span>
+    }
+
+    public String model() {
+<span class="nc" id="L78">        return config.model();</span>
+    }
+
+    /** The configured model followed by the fallback models, in the order they are tried. */
+    public List&lt;String&gt; models() {
+<span class="nc" id="L83">        return models;</span>
+    }
+
+    public int maxOutputTokens() {
+<span class="fc" id="L87">        return config.maxOutputTokens();</span>
+    }
+
+    /** One chat message. */
+    public static Map&lt;String, Object&gt; message(String role, String content) {
+<span class="fc" id="L92">        Map&lt;String, Object&gt; m = new LinkedHashMap&lt;&gt;();</span>
+<span class="fc" id="L93">        m.put(&quot;role&quot;, role);</span>
+<span class="fc" id="L94">        m.put(&quot;content&quot;, content);</span>
+<span class="fc" id="L95">        return m;</span>
+    }
+
+    /**
+     * A strict JSON Schema response format: the model must return JSON matching {@code schema}. Every object in the
+     * schema needs all properties required and {@code additionalProperties: false}.
+     */
+    public static Map&lt;String, Object&gt; jsonSchema(String name, Map&lt;String, Object&gt; schema) {
+<span class="fc" id="L103">        Map&lt;String, Object&gt; jsonSchema = new LinkedHashMap&lt;&gt;();</span>
+<span class="fc" id="L104">        jsonSchema.put(&quot;name&quot;, name);</span>
+<span class="fc" id="L105">        jsonSchema.put(&quot;strict&quot;, true);</span>
+<span class="fc" id="L106">        jsonSchema.put(&quot;schema&quot;, schema);</span>
+<span class="fc" id="L107">        Map&lt;String, Object&gt; format = new LinkedHashMap&lt;&gt;();</span>
+<span class="fc" id="L108">        format.put(&quot;type&quot;, &quot;json_schema&quot;);</span>
+<span class="fc" id="L109">        format.put(&quot;json_schema&quot;, jsonSchema);</span>
+<span class="fc" id="L110">        return format;</span>
+    }
+
+    /** The answer of one chat completion. */
+    public record Completion(String content, String model, long inputTokens, long outputTokens) {
+    }
+
+    /**
+     * Sends one chat completion, trying {@code preferredModel} first when it is one of the configured models; the
+     * others follow in their usual order if it is rate-limited. {@code responseFormat} may be null for free text.
+     */
+    public Completion complete(List&lt;Map&lt;String, Object&gt;&gt; messages, Map&lt;String, Object&gt; responseFormat,
+                               int maxOutputTokens, String preferredModel) {
+<span class="fc bfc" id="L123" title="All 2 branches covered.">        if (!config.isConfigured()) {</span>
+<span class="fc" id="L124">            throw new AiServiceException(&quot;Groq is not configured: set the GROQ_API_KEY environment variable &quot;</span>
+                    + &quot;on the backend and restart it.&quot;);
+        }
+<span class="fc" id="L127">        List&lt;String&gt; order = this.models;</span>
+<span class="pc bpc" id="L128" title="1 of 4 branches missed.">        if (preferredModel != null &amp;&amp; order.contains(preferredModel)) {</span>
+<span class="fc" id="L129">            List&lt;String&gt; ordered = new ArrayList&lt;&gt;();</span>
+<span class="fc" id="L130">            ordered.add(preferredModel);</span>
+<span class="fc bfc" id="L131" title="All 2 branches covered.">            order.stream().filter(m -&gt; !m.equals(preferredModel)).forEach(ordered::add);</span>
+<span class="fc" id="L132">            order = ordered;</span>
+        }
+<span class="pc bpc" id="L134" title="1 of 2 branches missed.">        for (int i = 0; i &lt; order.size(); i++) {</span>
+<span class="fc" id="L135">            String model = order.get(i);</span>
+<span class="fc" id="L136">            Map&lt;String, Object&gt; body = new LinkedHashMap&lt;&gt;();</span>
+<span class="fc" id="L137">            body.put(&quot;model&quot;, model);</span>
+<span class="fc" id="L138">            body.put(&quot;messages&quot;, messages);</span>
+<span class="pc bpc" id="L139" title="1 of 2 branches missed.">            if (responseFormat != null) {</span>
+<span class="fc" id="L140">                body.put(&quot;response_format&quot;, responseFormat);</span>
+            }
+<span class="fc" id="L142">            body.put(&quot;temperature&quot;, 0);</span>
+<span class="fc" id="L143">            body.put(&quot;max_completion_tokens&quot;, maxOutputTokens);</span>
+<span class="pc bpc" id="L144" title="1 of 2 branches missed.">            if (model.startsWith(&quot;openai/gpt-oss&quot;)) {</span>
+<span class="fc" id="L145">                body.put(&quot;reasoning_effort&quot;, &quot;low&quot;); // reasoning tokens count against max_completion_tokens</span>
+            }
+            try {
+<span class="fc" id="L148">                return read(sendWithRetry(body), model);</span>
+<span class="fc" id="L149">            } catch (AiServiceException e) {</span>
+<span class="pc bpc" id="L150" title="1 of 4 branches missed.">                if (!isRateLimit(e) || i == order.size() - 1) {</span>
+<span class="pc bpc" id="L151" title="2 of 4 branches missed.">                    throw order.size() &gt; 1 &amp;&amp; isRateLimit(e)</span>
+<span class="nc" id="L152">                            ? new AiServiceException(&quot;All free Groq models are rate-limited (&quot; + String.join(&quot;, &quot;, order)</span>
+<span class="nc" id="L153">                                    + &quot;). Retry in a minute or choose another engine.&quot;, e)</span>
+<span class="fc" id="L154">                            : e;</span>
+                }
+<span class="fc" id="L156">                log.info(&quot;Groq model {} is rate-limited; switching to {}&quot;, model, order.get(i + 1));</span>
+            }
+        }
+<span class="nc" id="L159">        throw new AiServiceException(&quot;Groq returned no answer&quot;);</span>
+    }
+
+    private static Completion read(JsonNode response, String model) {
+<span class="pc bpc" id="L163" title="1 of 2 branches missed.">        if (response == null) {</span>
+<span class="nc" id="L164">            throw new AiServiceException(&quot;Groq returned an empty response&quot;);</span>
+        }
+<span class="fc" id="L166">        JsonNode choice = response.path(&quot;choices&quot;).path(0);</span>
+<span class="fc" id="L167">        String finish = choice.path(&quot;finish_reason&quot;).asString(&quot;&quot;);</span>
+<span class="fc bfc" id="L168" title="All 2 branches covered.">        if (&quot;length&quot;.equals(finish)) {</span>
+<span class="fc" id="L169">            throw new AiServiceException(&quot;Groq's answer was cut off because it was too long.&quot;);</span>
+        }
+<span class="fc" id="L171">        String content = choice.path(&quot;message&quot;).path(&quot;content&quot;).asString(&quot;&quot;);</span>
+<span class="fc" id="L172">        JsonNode usage = response.path(&quot;usage&quot;);</span>
+<span class="fc" id="L173">        return new Completion(content, response.path(&quot;model&quot;).asString(model),</span>
+<span class="fc" id="L174">                usage.path(&quot;prompt_tokens&quot;).asLong(0), usage.path(&quot;completion_tokens&quot;).asLong(0));</span>
+    }
+
+    /**
+     * Sends the request, retrying temporary failures (HTTP 500/502/503/504, short 429 rate limits and dropped
+     * connections) up to {@link #MAX_ATTEMPTS} times with back-off, honouring a Retry-After header when present.
+     */
+    private JsonNode sendWithRetry(Map&lt;String, Object&gt; body) {
+<span class="fc" id="L182">        for (int attempt = 1; ; attempt++) {</span>
+            try {
+<span class="fc" id="L184">                return restClient.post().uri(&quot;/chat/completions&quot;)</span>
+<span class="fc" id="L185">                        .header(&quot;Authorization&quot;, &quot;Bearer &quot; + config.apiKey())</span>
+<span class="fc" id="L186">                        .contentType(MediaType.APPLICATION_JSON)</span>
+<span class="fc" id="L187">                        .body(body)</span>
+<span class="fc" id="L188">                        .retrieve()</span>
+<span class="fc" id="L189">                        .body(JsonNode.class);</span>
+<span class="fc" id="L190">            } catch (HttpServerErrorException e) {</span>
+<span class="pc bpc" id="L191" title="1 of 4 branches missed.">                if (attempt &gt;= MAX_ATTEMPTS || e.getStatusCode().value() == 501) {</span>
+<span class="fc" id="L192">                    throw new AiServiceException(&quot;Groq is temporarily unavailable (HTTP &quot; + e.getStatusCode().value()</span>
+<span class="fc" id="L193">                            + &quot;) after &quot; + attempt + &quot; attempt(s). Retry in a few minutes.&quot;, e);</span>
+                }
+<span class="pc bpc" id="L195" title="1 of 2 branches missed.">                pause(attempt, e.getResponseHeaders() == null ? null : e.getResponseHeaders().getFirst(&quot;Retry-After&quot;));</span>
+<span class="fc" id="L196">            } catch (HttpClientErrorException e) {</span>
+<span class="fc bfc" id="L197" title="All 4 branches covered.">                if (e.getStatusCode().value() == 429 &amp;&amp; attempt &lt; MAX_ATTEMPTS) {</span>
+<span class="pc bpc" id="L198" title="1 of 2 branches missed.">                    pause(attempt, e.getResponseHeaders() == null ? null : e.getResponseHeaders().getFirst(&quot;Retry-After&quot;));</span>
+<span class="fc" id="L199">                    continue;</span>
+                }
+<span class="fc" id="L201">                throw clientError(e);</span>
+<span class="nc" id="L202">            } catch (ResourceAccessException e) {</span>
+<span class="nc bnc" id="L203" title="All 2 branches missed.">                if (attempt &gt;= MAX_ATTEMPTS) {</span>
+<span class="nc" id="L204">                    throw new AiServiceException(&quot;Could not reach the Groq API. Check the internet connection and retry.&quot;, e);</span>
+                }
+<span class="nc" id="L206">                pause(attempt, null);</span>
+<span class="nc" id="L207">            } catch (RestClientException e) {</span>
+<span class="nc" id="L208">                throw new AiServiceException(&quot;Groq request failed: &quot; + e.getClass().getSimpleName(), e);</span>
+            }
+        }
+    }
+
+    /** True when Groq refused the request because a rate limit or quota was reached (HTTP 429). */
+    static boolean isRateLimit(AiServiceException e) {
+<span class="fc bfc" id="L215" title="All 4 branches covered.">        return e.getCause() instanceof HttpClientErrorException h &amp;&amp; h.getStatusCode().value() == 429;</span>
+    }
+
+    private void pause(int attempt, String retryAfter) {
+<span class="fc" id="L219">        long millis = retryDelay.toMillis() * (1L &lt;&lt; (attempt - 1));</span>
+<span class="pc bpc" id="L220" title="1 of 2 branches missed.">        if (retryAfter != null) {</span>
+            try {
+<span class="nc" id="L222">                millis = Math.max(millis, (long) (Double.parseDouble(retryAfter.trim()) * 1000));</span>
+<span class="nc" id="L223">            } catch (NumberFormatException ignored) {</span>
+                // HTTP-date form: keep the computed back-off
+            }
+        }
+<span class="fc" id="L227">        millis = Math.min(millis, MAX_RETRY_WAIT.toMillis());</span>
+<span class="fc" id="L228">        log.info(&quot;Groq temporarily unavailable; retrying in {} ms (attempt {} of {})&quot;, millis, attempt + 1, MAX_ATTEMPTS);</span>
+        try {
+<span class="fc" id="L230">            Thread.sleep(millis);</span>
+<span class="pc" id="L231">        } catch (InterruptedException e) {</span>
+<span class="nc" id="L232">            Thread.currentThread().interrupt();</span>
+<span class="nc" id="L233">            throw new AiServiceException(&quot;Interrupted while waiting to retry the Groq request&quot;, e);</span>
+        }
+<span class="fc" id="L235">    }</span>
+
+    private static AiServiceException clientError(HttpClientErrorException e) {
+<span class="fc" id="L238">        int code = e.getStatusCode().value();</span>
+<span class="fc bfc" id="L239" title="All 2 branches covered.">        if (code == 429) {</span>
+<span class="fc" id="L240">            return new AiServiceException(&quot;Groq free-tier limit reached (requests or tokens per minute). Retry later.&quot;, e);</span>
+        }
+<span class="pc bpc" id="L242" title="3 of 4 branches missed.">        if (code == 401 || code == 403) {</span>
+<span class="fc" id="L243">            return new AiServiceException(&quot;Groq rejected the API key. Check GROQ_API_KEY.&quot;, e);</span>
+        }
+<span class="nc bnc" id="L245" title="All 2 branches missed.">        if (code == 413) {</span>
+<span class="nc" id="L246">            return new AiServiceException(&quot;The documents are too large for one Groq request on the free tier. &quot;</span>
+<span class="nc" id="L247">                    + &quot;Split them or enter the quotation manually.&quot;, e);</span>
+        }
+<span class="nc" id="L249">        String detail = e.getResponseBodyAsString();</span>
+<span class="nc bnc" id="L250" title="All 2 branches missed.">        detail = detail.length() &gt; 300 ? detail.substring(0, 300) : detail;</span>
+<span class="nc" id="L251">        return new AiServiceException(&quot;Groq rejected the request (HTTP &quot; + code + &quot;): &quot; + detail, e);</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.13.202504020838</span></div></body></html>

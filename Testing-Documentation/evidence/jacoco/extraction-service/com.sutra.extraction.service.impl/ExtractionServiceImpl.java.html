@@ -1,0 +1,224 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>ExtractionServiceImpl.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">SUTRA extraction service</a> &gt; <a href="index.source.html" class="el_package">com.sutra.extraction.service.impl</a> &gt; <span class="el_source">ExtractionServiceImpl.java</span></div><h1>ExtractionServiceImpl.java</h1><pre class="source lang-java linenums">package com.sutra.extraction.service.impl;
+
+import com.sutra.api.extraction.ExtractionChoice;
+import com.sutra.api.internal.InternalContracts.ExtractionOutcome;
+import com.sutra.api.internal.InternalContracts.ExtractionTask;
+import com.sutra.api.internal.InternalContracts.ExtractionWork;
+import com.sutra.api.internal.InternalContracts.LineMatch;
+import com.sutra.api.internal.InternalContracts.RequestedLine;
+import com.sutra.common.error.ResourceNotFoundException;
+import com.sutra.extraction.client.DocumentStoreClient;
+import com.sutra.extraction.client.QuotationClient;
+import com.sutra.extraction.dto.response.ExtractionJobResponse;
+import com.sutra.extraction.entity.ExtractionJob;
+import com.sutra.extraction.exception.QuotationProcessingException;
+import com.sutra.extraction.repository.ExtractionJobRepository;
+import com.sutra.extraction.service.ExtractionService;
+import com.sutra.extraction.service.internal.ExtractionEngines;
+import com.sutra.extraction.service.internal.ExtractionInput;
+import com.sutra.extraction.service.internal.HybridItemMatcher;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.boot.context.event.ApplicationReadyEvent;
+import org.springframework.context.annotation.Lazy;
+import org.springframework.context.event.EventListener;
+import java.util.concurrent.Executor;
+import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
+import org.springframework.transaction.support.TransactionTemplate;
+
+import java.time.Clock;
+import java.time.Instant;
+import java.util.EnumSet;
+import java.util.List;
+import java.util.Optional;
+
+/**
+ * Runs readings as jobs:
+ * &lt;ol&gt;
+ *   &lt;li&gt;{@link #submit} stores a QUEUED job and, after it commits, hands it to the extraction pool.&lt;/li&gt;
+ *   &lt;li&gt;{@link #run} claims the quotation (the quotation service marks it PROCESSING and returns its files and
+ *       requested lines), fetches the files from the document service, reads them (Groq first, the rule-based
+ *       reader as backup, or the engine asked for), matches the lines, and hands the result back.&lt;/li&gt;
+ *   &lt;li&gt;On failure the quotation service is told why; the quotation becomes FAILED and keeps its files.&lt;/li&gt;
+ * &lt;/ol&gt;
+ * No database transaction is open while the engines run: reading can take minutes.
+ */
+@Service
+public class ExtractionServiceImpl implements ExtractionService {
+
+<span class="nc" id="L52">    private static final Logger log = LoggerFactory.getLogger(ExtractionServiceImpl.class);</span>
+
+    private final ExtractionJobRepository jobs;
+    private final QuotationClient quotations;
+    private final DocumentStoreClient documents;
+    private final ExtractionEngines engines;
+    private final HybridItemMatcher matcher;
+    private final TransactionTemplate tx;
+    private final Executor executor;
+    private final ExtractionService self;
+    private final Clock clock;
+
+<span class="nc" id="L64">    public ExtractionServiceImpl(ExtractionJobRepository jobs, QuotationClient quotations,</span>
+                                 DocumentStoreClient documents, ExtractionEngines engines, HybridItemMatcher matcher,
+                                 TransactionTemplate tx, @Qualifier(&quot;extractionExecutor&quot;) Executor executor,
+                                 @Lazy ExtractionService self, Clock clock) {
+<span class="nc" id="L68">        this.jobs = jobs;</span>
+<span class="nc" id="L69">        this.quotations = quotations;</span>
+<span class="nc" id="L70">        this.documents = documents;</span>
+<span class="nc" id="L71">        this.engines = engines;</span>
+<span class="nc" id="L72">        this.matcher = matcher;</span>
+<span class="nc" id="L73">        this.tx = tx;</span>
+<span class="nc" id="L74">        this.executor = executor;</span>
+<span class="nc" id="L75">        this.self = self;</span>
+<span class="nc" id="L76">        this.clock = clock;</span>
+<span class="nc" id="L77">    }</span>
+
+    @Override
+    public ExtractionJobResponse submit(ExtractionTask task) {
+<span class="nc" id="L81">        engines.validate(new ExtractionChoice(task.engine(), task.model()));</span>
+<span class="nc" id="L82">        ExtractionJob job = tx.execute(status -&gt; {</span>
+<span class="nc" id="L83">            ExtractionJob j = new ExtractionJob();</span>
+<span class="nc" id="L84">            j.setQuotationId(task.quotationId());</span>
+<span class="nc" id="L85">            j.setEngine(new ExtractionChoice(task.engine(), task.model()).engine());</span>
+<span class="nc" id="L86">            j.setPreferredModel(new ExtractionChoice(task.engine(), task.model()).model());</span>
+<span class="nc" id="L87">            j.setRequestedAt(Instant.now(clock));</span>
+<span class="nc" id="L88">            return jobs.save(j);</span>
+        });
+<span class="nc" id="L90">        dispatch(job.getId());</span>
+<span class="nc" id="L91">        return ExtractionJobResponse.from(job);</span>
+    }
+
+    private void dispatch(Long jobId) {
+<span class="nc bnc" id="L95" title="All 2 branches missed.">        if (TransactionSynchronizationManager.isSynchronizationActive()) {</span>
+<span class="nc" id="L96">            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {</span>
+                @Override
+                public void afterCommit() {
+<span class="nc" id="L99">                    executor.execute(() -&gt; self.run(jobId));</span>
+<span class="nc" id="L100">                }</span>
+            });
+<span class="nc" id="L102">        } else {</span>
+<span class="nc" id="L103">            executor.execute(() -&gt; self.run(jobId));</span>
+        }
+<span class="nc" id="L105">    }</span>
+
+    @Override
+    public void run(Long jobId) {
+<span class="nc" id="L109">        ExtractionJob job = jobs.findById(jobId).orElse(null);</span>
+<span class="nc bnc" id="L110" title="All 4 branches missed.">        if (job == null || job.getStatus() != ExtractionJob.Status.QUEUED) {</span>
+<span class="nc" id="L111">            return;</span>
+        }
+<span class="nc" id="L113">        update(jobId, j -&gt; {</span>
+<span class="nc" id="L114">            j.setStatus(ExtractionJob.Status.RUNNING);</span>
+<span class="nc" id="L115">            j.setStartedAt(Instant.now(clock));</span>
+<span class="nc" id="L116">        });</span>
+<span class="nc" id="L117">        Long quotationId = job.getQuotationId();</span>
+        Optional&lt;ExtractionWork&gt; claimed;
+        try {
+<span class="nc" id="L120">            claimed = quotations.claim(quotationId);</span>
+<span class="nc" id="L121">        } catch (RuntimeException e) {</span>
+<span class="nc" id="L122">            finish(jobId, ExtractionJob.Status.FAILED, null, null, null, &quot;Quotation service unavailable: &quot; + e.getMessage());</span>
+<span class="nc" id="L123">            return;</span>
+        }
+<span class="nc bnc" id="L125" title="All 2 branches missed.">        if (claimed.isEmpty()) {</span>
+<span class="nc" id="L126">            finish(jobId, ExtractionJob.Status.SKIPPED, null, null, null, &quot;The quotation is already being read, or was deleted&quot;);</span>
+<span class="nc" id="L127">            return;</span>
+        }
+<span class="nc" id="L129">        ExtractionWork work = claimed.get();</span>
+        ExtractionOutcome outcome;
+        try {
+<span class="nc" id="L132">            ExtractionInput input = input(work).withPreferredModel(job.getPreferredModel());</span>
+<span class="nc" id="L133">            ExtractionEngines.Extraction extracted = engines.extract(input, job.getEngine());</span>
+<span class="nc" id="L134">            List&lt;LineMatch&gt; matches = matcher.match(work.requestedLines(), extracted.data().items());</span>
+<span class="nc" id="L135">            outcome = new ExtractionOutcome(extracted.data(), extracted.source(), extracted.model(), matches, null);</span>
+<span class="nc" id="L136">        } catch (QuotationProcessingException e) {</span>
+<span class="nc" id="L137">            outcome = ExtractionOutcome.failed(e.getMessage());</span>
+<span class="nc" id="L138">        } catch (RuntimeException e) {</span>
+<span class="nc" id="L139">            log.error(&quot;Unexpected extraction error for quotation {}&quot;, quotationId, e);</span>
+<span class="nc" id="L140">            outcome = ExtractionOutcome.failed(&quot;Unexpected extraction error. Retry, or enter the quotation manually.&quot;);</span>
+        }
+        try {
+<span class="nc" id="L143">            quotations.report(quotationId, outcome);</span>
+<span class="nc" id="L144">        } catch (RuntimeException e) {</span>
+<span class="nc" id="L145">            log.error(&quot;Could not hand the reading of quotation {} to the quotation service&quot;, quotationId, e);</span>
+<span class="nc" id="L146">            finish(jobId, ExtractionJob.Status.FAILED, null, null, null,</span>
+<span class="nc" id="L147">                    &quot;The result could not be handed to the quotation service: &quot; + e.getMessage());</span>
+<span class="nc" id="L148">            return;</span>
+        }
+<span class="nc bnc" id="L150" title="All 2 branches missed.">        if (outcome.succeeded()) {</span>
+<span class="nc" id="L151">            finish(jobId, ExtractionJob.Status.SUCCEEDED, outcome, outcome.model(), outcome.data().items().size(), null);</span>
+<span class="nc" id="L152">        } else {</span>
+<span class="nc" id="L153">            finish(jobId, ExtractionJob.Status.FAILED, null, null, null, outcome.failureReason());</span>
+        }
+<span class="nc" id="L155">    }</span>
+
+    /** Files from the document service, requested lines as context. */
+    private ExtractionInput input(ExtractionWork work) {
+<span class="nc bnc" id="L159" title="All 4 branches missed.">        if (work.documents() == null || work.documents().isEmpty()) {</span>
+<span class="nc" id="L160">            throw new QuotationProcessingException(&quot;The original file is missing&quot;);</span>
+        }
+<span class="nc" id="L162">        List&lt;ExtractionInput.Document&gt; files = work.documents().stream()</span>
+<span class="nc" id="L163">                .map(d -&gt; new ExtractionInput.Document(d.fileName(), d.format(), documents.content(d.documentId())))</span>
+<span class="nc" id="L164">                .toList();</span>
+<span class="nc" id="L165">        List&lt;ExtractionInput.RequestedItem&gt; requested = work.requestedLines().stream()</span>
+<span class="nc" id="L166">                .map(ExtractionServiceImpl::requestedItem).toList();</span>
+<span class="nc" id="L167">        return new ExtractionInput(files, work.vendorName(), work.requestCurrency(), requested);</span>
+    }
+
+    private static ExtractionInput.RequestedItem requestedItem(RequestedLine r) {
+<span class="nc" id="L171">        return new ExtractionInput.RequestedItem(r.lineNumber(), r.itemCode(), r.description(), r.quantity(),</span>
+<span class="nc" id="L172">                r.unitOfMeasure(), r.specifications());</span>
+    }
+
+    private void finish(Long jobId, ExtractionJob.Status status, ExtractionOutcome outcome, String model,
+                        Integer items, String reason) {
+<span class="nc" id="L177">        update(jobId, j -&gt; {</span>
+<span class="nc" id="L178">            j.setStatus(status);</span>
+<span class="nc bnc" id="L179" title="All 2 branches missed.">            j.setSource(outcome == null ? null : outcome.source());</span>
+<span class="nc" id="L180">            j.setModelUsed(model);</span>
+<span class="nc" id="L181">            j.setItemsRead(items);</span>
+<span class="nc bnc" id="L182" title="All 4 branches missed.">            j.setFailureReason(reason == null ? null : reason.length() &gt; 1000 ? reason.substring(0, 1000) : reason);</span>
+<span class="nc" id="L183">            j.setFinishedAt(Instant.now(clock));</span>
+<span class="nc" id="L184">        });</span>
+<span class="nc" id="L185">    }</span>
+
+    private void update(Long jobId, java.util.function.Consumer&lt;ExtractionJob&gt; change) {
+<span class="nc" id="L188">        tx.executeWithoutResult(status -&gt; jobs.findById(jobId).ifPresent(change));</span>
+<span class="nc" id="L189">    }</span>
+
+    @Override
+    public ExtractionJobResponse get(Long jobId) {
+<span class="nc" id="L193">        return jobs.findById(jobId).map(ExtractionJobResponse::from)</span>
+<span class="nc" id="L194">                .orElseThrow(() -&gt; new ResourceNotFoundException(&quot;Extraction&quot;, jobId));</span>
+    }
+
+    @Override
+    public List&lt;ExtractionJobResponse&gt; history(Long quotationId) {
+<span class="nc" id="L199">        return jobs.findTop20ByQuotationIdOrderByIdDesc(quotationId).stream().map(ExtractionJobResponse::from).toList();</span>
+    }
+
+    /**
+     * After a restart: queued jobs run again; a job that was reading when the service stopped is reported as
+     * failed, so its quotation leaves PROCESSING and can be read again.
+     */
+    @EventListener(ApplicationReadyEvent.class)
+    public void resumeAfterRestart() {
+<span class="nc bnc" id="L208" title="All 2 branches missed.">        for (ExtractionJob job : jobs.findByStatusInOrderByIdAsc(EnumSet.of(ExtractionJob.Status.QUEUED,</span>
+<span class="nc" id="L209">                ExtractionJob.Status.RUNNING))) {</span>
+<span class="nc bnc" id="L210" title="All 2 branches missed.">            if (job.getStatus() == ExtractionJob.Status.QUEUED) {</span>
+<span class="nc" id="L211">                executor.execute(() -&gt; self.run(job.getId()));</span>
+<span class="nc" id="L212">                continue;</span>
+            }
+<span class="nc" id="L214">            String reason = &quot;Reading was interrupted by a restart. Read the quotation again.&quot;;</span>
+            try {
+<span class="nc" id="L216">                quotations.report(job.getQuotationId(), ExtractionOutcome.failed(reason));</span>
+<span class="nc" id="L217">            } catch (RuntimeException e) {</span>
+<span class="nc" id="L218">                log.warn(&quot;Could not report the interrupted reading of quotation {}: {}&quot;, job.getQuotationId(), e.getMessage());</span>
+            }
+<span class="nc" id="L220">            finish(job.getId(), ExtractionJob.Status.FAILED, null, null, null, reason);</span>
+        }
+<span class="nc" id="L222">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.13.202504020838</span></div></body></html>

@@ -1,0 +1,203 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>AuditLogServiceImpl.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">SUTRA audit service</a> &gt; <a href="index.source.html" class="el_package">com.sutra.audit.service.impl</a> &gt; <span class="el_source">AuditLogServiceImpl.java</span></div><h1>AuditLogServiceImpl.java</h1><pre class="source lang-java linenums">package com.sutra.audit.service.impl;
+
+import com.sutra.audit.dto.response.AuditLogResponse;
+import com.sutra.audit.dto.response.ChainVerificationResponse;
+import com.sutra.audit.entity.AuditChainHead;
+import com.sutra.audit.entity.AuditLog;
+import com.sutra.audit.repository.AuditChainHeadRepository;
+import com.sutra.audit.repository.AuditLogRepository;
+import com.sutra.audit.service.AuditLogService;
+import com.sutra.audit.service.internal.AuditHashCalculator;
+import com.sutra.common.audit.AuditEventMessage;
+import com.sutra.common.web.PageResponse;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.boot.context.event.ApplicationReadyEvent;
+import org.springframework.context.event.EventListener;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
+
+import java.time.Clock;
+import java.time.Instant;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Objects;
+import java.util.Set;
+import java.util.UUID;
+
+/**
+ * Stores audit events sent by the services and answers audit-trail queries. Every new entry is linked to the
+ * previous one with a SHA-256 hash while the chain head is locked, so the chain never forks.
+ */
+@Service
+public class AuditLogServiceImpl implements AuditLogService {
+
+<span class="fc" id="L39">    private static final Logger log = LoggerFactory.getLogger(AuditLogServiceImpl.class);</span>
+<span class="fc" id="L40">    private static final int VERIFY_PAGE = 1000;</span>
+
+    private final AuditLogRepository repository;
+    private final AuditChainHeadRepository headRepository;
+    private final AuditHashCalculator hashCalculator;
+    private final TransactionTemplate tx;
+    private final Clock clock;
+
+<span class="fc" id="L48">    public AuditLogServiceImpl(AuditLogRepository repository, AuditChainHeadRepository headRepository,</span>
+                               AuditHashCalculator hashCalculator, TransactionTemplate tx, Clock clock) {
+<span class="fc" id="L50">        this.repository = repository;</span>
+<span class="fc" id="L51">        this.headRepository = headRepository;</span>
+<span class="fc" id="L52">        this.hashCalculator = hashCalculator;</span>
+<span class="fc" id="L53">        this.tx = tx;</span>
+<span class="fc" id="L54">        this.clock = clock;</span>
+<span class="fc" id="L55">    }</span>
+
+    @Override
+    @Transactional
+    public int ingest(List&lt;AuditEventMessage&gt; events) {
+<span class="fc" id="L60">        List&lt;AuditEventMessage&gt; valid = events.stream().filter(Objects::nonNull)</span>
+<span class="pc bpc" id="L61" title="2 of 6 branches missed.">                .filter(e -&gt; e.eventId() != null &amp;&amp; e.entityType() != null &amp;&amp; e.action() != null)</span>
+<span class="fc" id="L62">                .toList();</span>
+<span class="fc bfc" id="L63" title="All 2 branches covered.">        if (valid.isEmpty()) {</span>
+<span class="fc" id="L64">            return 0;</span>
+        }
+        // Inbox: event ids already stored are skipped, so a repeated delivery is harmless.
+<span class="fc" id="L67">        Set&lt;UUID&gt; seen = new HashSet&lt;&gt;(repository.findExistingEventIds(valid.stream().map(AuditEventMessage::eventId).toList()));</span>
+<span class="fc" id="L68">        AuditChainHead head = null;</span>
+<span class="fc" id="L69">        int stored = 0;</span>
+<span class="fc bfc" id="L70" title="All 2 branches covered.">        for (AuditEventMessage e : valid) {</span>
+<span class="fc bfc" id="L71" title="All 2 branches covered.">            if (!seen.add(e.eventId())) {</span>
+<span class="fc" id="L72">                continue;</span>
+            }
+<span class="fc bfc" id="L74" title="All 2 branches covered.">            if (head == null) {</span>
+<span class="fc" id="L75">                head = headRepository.lockHead();</span>
+            }
+<span class="fc" id="L77">            AuditLog entry = toEntry(e);</span>
+<span class="fc" id="L78">            link(entry, head);</span>
+<span class="fc" id="L79">            repository.save(entry);</span>
+<span class="fc" id="L80">            stored++;</span>
+        }
+<span class="fc" id="L82">        return stored;</span>
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public PageResponse&lt;AuditLogResponse&gt; search(String entityType, Long entityId, String performedBy, int page, int size) {
+<span class="nc" id="L88">        return PageResponse.of(repository.search(blankToNull(entityType), entityId, blankToNull(performedBy),</span>
+<span class="nc" id="L89">                pageable(page, size)), AuditLogResponse::from);</span>
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public PageResponse&lt;AuditLogResponse&gt; purchaseRequestHistory(Long purchaseRequestId, int page, int size) {
+<span class="nc" id="L95">        return PageResponse.of(repository.purchaseRequestHistory(purchaseRequestId, pageable(page, size)),</span>
+<span class="nc" id="L96">                AuditLogResponse::from);</span>
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public ChainVerificationResponse verifyChain() {
+<span class="fc" id="L102">        long unchained = repository.countBySequenceNoIsNull();</span>
+<span class="fc" id="L103">        String previous = AuditHashCalculator.GENESIS_HASH;</span>
+<span class="fc" id="L104">        long expectedSequence = 1;</span>
+<span class="fc" id="L105">        long checked = 0;</span>
+<span class="fc" id="L106">        long after = 0;</span>
+        List&lt;AuditLog&gt; page;
+        do {
+<span class="fc" id="L109">            page = repository.findBySequenceNoGreaterThanOrderBySequenceNoAsc(after, PageRequest.of(0, VERIFY_PAGE));</span>
+<span class="fc bfc" id="L110" title="All 2 branches covered.">            for (AuditLog entry : page) {</span>
+<span class="fc" id="L111">                checked++;</span>
+<span class="fc bfc" id="L112" title="All 2 branches covered.">                if (entry.getSequenceNo() != expectedSequence) {</span>
+<span class="fc" id="L113">                    return broken(checked, expectedSequence, &quot;entry &quot; + expectedSequence + &quot; is missing&quot;, previous);</span>
+                }
+<span class="pc bpc" id="L115" title="1 of 2 branches missed.">                if (!previous.equals(entry.getPreviousHash())) {</span>
+<span class="nc" id="L116">                    return broken(checked, entry.getSequenceNo(), &quot;link to the previous entry does not match&quot;, previous);</span>
+                }
+<span class="fc" id="L118">                String recomputed = hashCalculator.hash(entry, previous);</span>
+<span class="fc bfc" id="L119" title="All 2 branches covered.">                if (!recomputed.equals(entry.getHash())) {</span>
+<span class="fc" id="L120">                    return broken(checked, entry.getSequenceNo(), &quot;content was changed after it was stored&quot;, previous);</span>
+                }
+<span class="fc" id="L122">                previous = entry.getHash();</span>
+<span class="fc" id="L123">                expectedSequence++;</span>
+<span class="fc" id="L124">                after = entry.getSequenceNo();</span>
+            }
+<span class="pc bpc" id="L126" title="1 of 2 branches missed.">        } while (page.size() == VERIFY_PAGE);</span>
+<span class="pc bpc" id="L127" title="1 of 2 branches missed.">        if (unchained &gt; 0) {</span>
+<span class="nc" id="L128">            return broken(checked, null, unchained + &quot; entries are not linked into the chain yet&quot;, previous);</span>
+        }
+<span class="fc" id="L130">        return new ChainVerificationResponse(true, checked, null, null, previous, Instant.now(clock));</span>
+    }
+
+    /**
+     * Links entries stored before the hash chain existed (oldest first), once, when the service starts. New
+     * entries are always linked as they arrive.
+     */
+    @EventListener(ApplicationReadyEvent.class)
+    public void linkUnchainedEntries() {
+<span class="nc" id="L139">        long total = 0;</span>
+        int linked;
+<span class="nc bnc" id="L141" title="All 2 branches missed.">        do {</span>
+<span class="nc" id="L142">            Integer count = tx.execute(status -&gt; {</span>
+<span class="nc" id="L143">                List&lt;AuditLog&gt; legacy = repository.findTop500BySequenceNoIsNullOrderByIdAsc();</span>
+<span class="nc bnc" id="L144" title="All 2 branches missed.">                if (legacy.isEmpty()) {</span>
+<span class="nc" id="L145">                    return 0;</span>
+                }
+<span class="nc" id="L147">                AuditChainHead head = headRepository.lockHead();</span>
+<span class="nc" id="L148">                legacy.forEach(entry -&gt; {</span>
+<span class="nc" id="L149">                    entry.setPerformedAt(AuditHashCalculator.normalise(entry.getPerformedAt()));</span>
+<span class="nc" id="L150">                    link(entry, head);</span>
+<span class="nc" id="L151">                });</span>
+<span class="nc" id="L152">                return legacy.size();</span>
+            });
+<span class="nc bnc" id="L154" title="All 2 branches missed.">            linked = count == null ? 0 : count;</span>
+<span class="nc" id="L155">            total += linked;</span>
+<span class="nc" id="L156">        } while (linked &gt; 0);</span>
+<span class="nc bnc" id="L157" title="All 2 branches missed.">        if (total &gt; 0) {</span>
+<span class="nc" id="L158">            log.info(&quot;Linked {} earlier audit entries into the hash chain&quot;, total);</span>
+        }
+<span class="nc" id="L160">    }</span>
+
+    private void link(AuditLog entry, AuditChainHead head) {
+<span class="fc" id="L163">        long sequence = head.getLastSequence() + 1;</span>
+<span class="fc" id="L164">        entry.setSequenceNo(sequence);</span>
+<span class="fc" id="L165">        entry.setPreviousHash(head.getLastHash());</span>
+<span class="fc" id="L166">        entry.setHash(hashCalculator.hash(entry, head.getLastHash()));</span>
+<span class="fc" id="L167">        head.advance(sequence, entry.getHash());</span>
+<span class="fc" id="L168">    }</span>
+
+    private static AuditLog toEntry(AuditEventMessage e) {
+<span class="fc" id="L171">        AuditLog entry = new AuditLog();</span>
+<span class="fc" id="L172">        entry.setEventId(e.eventId());</span>
+<span class="pc bpc" id="L173" title="1 of 2 branches missed.">        entry.setService(truncate(e.service() == null ? &quot;unknown&quot; : e.service(), 40));</span>
+<span class="fc" id="L174">        entry.setEntityType(truncate(e.entityType(), 50));</span>
+<span class="fc" id="L175">        entry.setEntityId(e.entityId());</span>
+<span class="fc" id="L176">        entry.setPurchaseRequestId(e.purchaseRequestId());</span>
+<span class="fc" id="L177">        entry.setAction(truncate(e.action(), 50));</span>
+<span class="pc bpc" id="L178" title="1 of 2 branches missed.">        entry.setPerformedBy(truncate(e.performedBy() == null ? &quot;system&quot; : e.performedBy(), 60));</span>
+<span class="pc bpc" id="L179" title="1 of 2 branches missed.">        entry.setPerformedAt(AuditHashCalculator.normalise(e.performedAt() == null ? Instant.now() : e.performedAt()));</span>
+<span class="pc bpc" id="L180" title="1 of 2 branches missed.">        entry.setCorrelationId(e.correlationId() == null ? null : truncate(e.correlationId(), 64));</span>
+<span class="fc" id="L181">        entry.setDetails(e.details());</span>
+<span class="fc" id="L182">        return entry;</span>
+    }
+
+    private static ChainVerificationResponse broken(long checked, Long sequence, String reason, String lastGoodHash) {
+<span class="fc" id="L186">        log.error(&quot;Audit chain verification failed at entry {}: {}&quot;, sequence, reason);</span>
+<span class="fc" id="L187">        return new ChainVerificationResponse(false, checked, sequence, reason, lastGoodHash, Instant.now());</span>
+    }
+
+    private static Pageable pageable(int page, int size) {
+<span class="nc" id="L191">        return PageRequest.of(Math.max(page, 0), Math.min(Math.max(size, 1), 200),</span>
+<span class="nc" id="L192">                Sort.by(Sort.Direction.DESC, AuditLog::getPerformedAt, AuditLog::getId));</span>
+    }
+
+    private static String blankToNull(String s) {
+<span class="nc bnc" id="L196" title="All 4 branches missed.">        return s == null || s.isBlank() ? null : s.trim();</span>
+    }
+
+    private static String truncate(String s, int max) {
+<span class="pc bpc" id="L200" title="1 of 2 branches missed.">        return s.length() &lt;= max ? s : s.substring(0, max);</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.13.202504020838</span></div></body></html>

@@ -1,0 +1,80 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>TokenStateCache.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">SUTRA API gateway</a> &gt; <a href="index.source.html" class="el_package">com.sutra.gateway</a> &gt; <span class="el_source">TokenStateCache.java</span></div><h1>TokenStateCache.java</h1><pre class="source lang-java linenums"><span class="pc" id="L1">package com.sutra.gateway;</span>
+
+import com.sutra.common.security.JwtCodec;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.time.Duration;
+import java.time.Instant;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Component;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
+
+/**
+ * Asks the auth service whether a user is still active and which token version is current, caching the answer for
+ * a few seconds. A deactivated user, or one whose roles or password changed, is therefore signed out everywhere
+ * within that time instead of when the token expires.
+ */
+@Component
+public class TokenStateCache {
+
+<span class="fc" id="L26">    private static final Logger log = LoggerFactory.getLogger(TokenStateCache.class);</span>
+
+    /** What auth said about a user. {@code known} is false when the user no longer exists. */
+    public record TokenState(boolean known, boolean active, long tokenVersion) {
+    }
+
+    private record Entry(TokenState state, Instant expires) {
+    }
+
+<span class="nc" id="L35">    private final Map&lt;Long, Entry&gt; cache = new ConcurrentHashMap&lt;&gt;();</span>
+<span class="nc" id="L36">    private final HttpClient http = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(3)).build();</span>
+    private final JwtCodec jwt;
+    private final ObjectMapper objectMapper;
+    private final GatewayProperties properties;
+
+<span class="nc" id="L41">    public TokenStateCache(JwtCodec jwt, ObjectMapper objectMapper, GatewayProperties properties) {</span>
+<span class="nc" id="L42">        this.jwt = jwt;</span>
+<span class="nc" id="L43">        this.objectMapper = objectMapper;</span>
+<span class="nc" id="L44">        this.properties = properties;</span>
+<span class="nc" id="L45">    }</span>
+
+    /** The user's state, or null when the auth service cannot be reached (the caller then refuses the request). */
+    public TokenState get(Long userId) {
+<span class="nc" id="L49">        Entry cached = cache.get(userId);</span>
+<span class="nc bnc" id="L50" title="All 4 branches missed.">        if (cached != null &amp;&amp; Instant.now().isBefore(cached.expires())) {</span>
+<span class="nc" id="L51">            return cached.state();</span>
+        }
+        try {
+<span class="nc" id="L54">            HttpRequest request = HttpRequest.newBuilder(URI.create(properties.authUrl() + &quot;/internal/users/&quot; + userId + &quot;/token-state&quot;))</span>
+<span class="nc" id="L55">                    .header(&quot;Authorization&quot;, &quot;Bearer &quot; + jwt.issueService(&quot;gateway&quot;))</span>
+<span class="nc" id="L56">                    .timeout(Duration.ofSeconds(5))</span>
+<span class="nc" id="L57">                    .GET().build();</span>
+<span class="nc" id="L58">            HttpResponse&lt;String&gt; response = http.send(request, HttpResponse.BodyHandlers.ofString());</span>
+            TokenState state;
+<span class="nc bnc" id="L60" title="All 2 branches missed.">            if (response.statusCode() == 404) {</span>
+<span class="nc" id="L61">                state = new TokenState(false, false, -1);</span>
+<span class="nc bnc" id="L62" title="All 2 branches missed.">            } else if (response.statusCode() == 200) {</span>
+<span class="nc" id="L63">                JsonNode body = objectMapper.readTree(response.body());</span>
+<span class="nc" id="L64">                state = new TokenState(true, body.path(&quot;active&quot;).asBoolean(false), body.path(&quot;tokenVersion&quot;).asLong(-1));</span>
+<span class="nc" id="L65">            } else {</span>
+<span class="nc" id="L66">                log.warn(&quot;Auth service answered {} to a token-state check&quot;, response.statusCode());</span>
+<span class="nc" id="L67">                return null;</span>
+            }
+<span class="nc" id="L69">            cache.put(userId, new Entry(state, Instant.now().plusSeconds(properties.tokenCheckCacheSeconds())));</span>
+<span class="nc" id="L70">            return state;</span>
+<span class="nc" id="L71">        } catch (InterruptedException e) {</span>
+<span class="nc" id="L72">            Thread.currentThread().interrupt();</span>
+<span class="nc" id="L73">            return null;</span>
+<span class="nc" id="L74">        } catch (Exception e) {</span>
+<span class="nc" id="L75">            log.warn(&quot;Auth service unreachable for a token-state check: {}&quot;, e.getMessage());</span>
+<span class="nc" id="L76">            return null;</span>
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.13.202504020838</span></div></body></html>

@@ -1,0 +1,182 @@
+[
+  {
+    "section": "Cover",
+    "title": "PROJECT SUTRA",
+    "script": "Introduce the project as a procurement workflow that brings buyers, suppliers and approvers into one traceable process. The name expands to Supplier Unified Tender & Request Automation. Group 12 is the presenting team.",
+    "terms": "The RFQ is a Request for Quotation. Vendors submit offers against a buyer’s list of required items and terms.",
+    "example": "SUTRA connects RFQ creation to quotation comparison and a recorded human decision.",
+    "viva": "Q: What problem does SUTRA address? A: It centralizes vendor quotation handling, extracts offer details, validates totals and supports a traceable decision.",
+    "sources": "README.md; docs/SUTRA_PROJECT_GUIDE.md"
+  },
+  {
+    "section": "Contents",
+    "title": "Table of Contents",
+    "script": "The presentation moves from the procurement problem and SUTRA design into architecture, workflow and database structure. It then covers key modules and the four technical areas: AI, security, testing and demonstration. It closes with challenges, limitations, future work and references. The source outline skips section 8, so the numbering is preserved as shown.",
+    "terms": "Slides 13 to 16 in this deck correspond to outline sections 12 to 15. Section 11.1 through 11.9 are consolidated into one feature slide.",
+    "example": "Use this slide to orient the audience; the detailed module list is summarized on slide 12.",
+    "viva": "Q: Why does the sequence jump from 7 to 9? A: The original reference outline skips section 8; this deck preserves the numbering rather than inventing a topic.",
+    "sources": "Pasted presentation brief; supplied reference screenshots"
+  },
+  {
+    "section": "1",
+    "title": "Introduction to Project SUTRA",
+    "script": "SUTRA stands for Supplier Unified Tender and Request Automation. “Sutra” also means a thread or rule, which is a useful metaphor for the system: it connects a purchase request, supplier offers, validation, comparison and approval. The tool supports the procurement process rather than replacing the decision maker.",
+    "terms": "RFQ means Request for Quotation. OCR is used when a PDF contains page images rather than selectable text. A backend validation step checks extracted information and recalculates monetary values.",
+    "example": "A company needs bearings, bolts and steel. The buyer publishes one RFQ, vendors submit offers, and SUTRA brings those offers into a common review.",
+    "viva": "Q: Does SUTRA automatically buy or award the goods? A: No. It supports quotation processing; an authorized manager records the award or rejection.",
+    "sources": "README.md; docs/SUTRA_PROJECT_GUIDE.md"
+  },
+  {
+    "section": "2",
+    "title": "Project Overview",
+    "script": "This slide shows the full procurement path. A buyer opens an RFQ with line items and a due date. Vendors submit their quotations. SUTRA parses files, extracts offer details and validates them. The comparison report ranks offers for review, but the manager records the final decision. The audit history links the steps.",
+    "terms": "An advisory rank is a comparison aid, not an automatic award. An RFQ’s status and quotation readiness control which actions are available.",
+    "example": "For the sample automotive RFQ, the report compares three supplier offers, notes a warranty issue and still waits for a manager’s approval.",
+    "viva": "Q: What does SUTRA automate? A: Document reading, field normalization, validation, comparison report creation and record keeping. The decision remains with an authorized manager.",
+    "sources": "docs/ACCEPTANCE_RESULTS.md; docs/SUTRA_PROJECT_GUIDE.md"
+  },
+  {
+    "section": "3",
+    "title": "Problem Statement",
+    "script": "The core issue is not just the number of documents. Each vendor describes items differently and may use a different file format. Manual re-entry creates typing and arithmetic errors, while important delivery, warranty or payment terms can be missed. When files and decisions are spread across email or local folders, it is difficult to reconstruct why a supplier was selected.",
+    "terms": "OCR, document parsing and item matching can reduce repetitive work, but uncertain fields still need review. Central records and audit events improve traceability.",
+    "example": "A bearing may be called “deep groove bearing” in one quote and “ball bearing” in another. The buyer needs to verify that the offers refer to the same RFQ line.",
+    "viva": "Q: Why not compare by price alone? A: Offers may have different items, missing lines, warranty conditions or payment terms. Lowest price alone is not a complete procurement decision.",
+    "sources": "docs/SUTRA_PROJECT_GUIDE.md; supplied problem statement screenshot"
+  },
+  {
+    "section": "4",
+    "title": "Proposed Solution",
+    "script": "SUTRA separates extraction, calculation and judgment. AI is useful for reading inconsistent vendor documents. The Java backend checks structured fields, matches items and recalculates values; it does not trust model arithmetic. People inspect the comparison and decide which offer to accept.",
+    "terms": "BigDecimal avoids binary floating point rounding for currency. A comparison rank or grade is advisory; it does not change an RFQ into an approved award.",
+    "example": "If the system extracts a unit price but the printed total differs from the recalculated total, it raises a mismatch for review rather than accepting the AI’s number.",
+    "viva": "Q: Why not let AI pick the vendor? A: Extraction may be uncertain and commercial priorities require accountable human judgment. SUTRA’s award rules require an authorized manager.",
+    "sources": "backend/quotation-service/src/main/java/com/sutra/quotation/service/internal/QuotationCalculator.java; backend/approval-service; docs/ACCEPTANCE_RESULTS.md"
+  },
+  {
+    "section": "5",
+    "title": "Users and Roles",
+    "script": "SUTRA has four roles. Administrators manage accounts and master data. Buyers create RFQs and manage procurement records. Vendors see their own portal and submit their own offers. Managers record the final award or rejection. Access is checked both by role and, for sensitive records, by ownership or vendor association.",
+    "terms": "The role names in the application are ADMIN, PROCUREMENT, VENDOR and APPROVER. @PreAuthorize provides method-level restrictions, with record access checks in service logic.",
+    "example": "A vendor token cannot be used to download another supplier’s quotation file.",
+    "viva": "Q: Can a buyer award an RFQ? A: The award permission belongs to the APPROVER role (or an administrator under the configured rule); procurement users compare but do not award.",
+    "sources": "backend/sutra-common/src/main/java/com/sutra/common/security; backend/rfq-service; backend/quotation-service; frontend/src"
+  },
+  {
+    "section": "6",
+    "title": "Technology Stack",
+    "script": "The frontend uses React and Vite. The backend is a set of Java 17 Spring Boot services behind an API Gateway. PostgreSQL stores service data with Flyway migrations. A separate Python FastAPI service parses documents and supports rule-based extraction and matching. Java calls Groq for language-model extraction. PDFBox and Tesseract support scanned PDF reading.",
+    "terms": "NUMERIC stores exact decimal values. BYTEA stores binary file content. Tesseract is a local OCR process and is needed for scanned PDF pages.",
+    "example": "A text PDF can be parsed without OCR; a scanned image PDF needs the PDFBox and Tesseract path.",
+    "viva": "Q: Is FastAPI a Spring microservice? A: No. It is a separate Python service. The ten business services plus one gateway are Spring Boot deployables.",
+    "sources": "VERSIONS.md; frontend/package.json; backend/pom.xml; ai/requirements.txt"
+  },
+  {
+    "section": "7",
+    "title": "System Architecture",
+    "script": "The browser sends requests to the API Gateway, which checks JWTs, account state and public rate limits before routing requests. Ten business services handle identity, master data, RFQs, quotations, documents, extraction, comparison, approval, audit and reporting. The gateway makes eleven Spring Boot deployables in total. A separate Python FastAPI service parses documents and offers a rule-based extractor and item matcher. All services use PostgreSQL with service-owned schemas.",
+    "terms": "sutra-api and sutra-common are shared Java libraries rather than running services. Java calls Groq; Python is the parsing and rules integration.",
+    "example": "When a quotation is uploaded, the document and extraction services store and process it; Python returns parsed content, then Java calls Groq and validates the result.",
+    "viva": "Q: How many Spring Boot deployables are in the diagram? A: Ten business microservices plus the API Gateway, eleven total. Python FastAPI is an additional separate service.",
+    "sources": "backend; ai/app/main.py; README.md; VERSIONS.md"
+  },
+  {
+    "section": "9",
+    "title": "Workflow and Status Lifecycles",
+    "script": "The process begins with vendor registration and administrator approval, then the buyer creates and opens an RFQ. Vendors submit quotations before the due date. SUTRA processes each file and marks it ready only when no blocking errors remain. The buyer can compare ready offers. The manager records the final decision. RFQs can be cancelled before the decision, while approval and rejection are manager actions.",
+    "terms": "Quotation states include UPLOADED, PROCESSING, READY_FOR_COMPARISON, NEEDS_REVIEW and FAILED. RFQ states include DRAFT, OPEN, UNDER_REVIEW, APPROVED, REJECTED and CANCELLED.",
+    "example": "If extraction fails, a user can retry with another engine or enter data manually; the original file remains available.",
+    "viva": "Q: Can a warning block comparison? A: The current workflow can keep warnings visible without blocking; blocking errors prevent a quotation from being READY_FOR_COMPARISON.",
+    "sources": "backend/sutra-api/src/main/java/com/sutra/api/enums; backend/rfq-service; backend/extraction-service; docs/ACCEPTANCE_RESULTS.md"
+  },
+  {
+    "section": "10",
+    "title": "Database Design and Integrity",
+    "script": "SUTRA uses one PostgreSQL database with nine service-owned schemas. Flyway migrations define each service’s tables. RFQs link to request items; quotations link to vendors and their quoted items; comparison reports and approvals preserve the decision context. Monetary values use NUMERIC in the database and BigDecimal in Java. Quotation rows use optimistic locking to detect concurrent edits. Audit events are relayed through an outbox and linked with a SHA-256 chain.",
+    "terms": "BYTEA stores uploaded file bytes. Optimistic locking uses a version field so simultaneous edits can be detected. A hash chain makes edits detectable when the chain is checked, but privileged database access is outside an absolute guarantee.",
+    "example": "A buyer changes a quotation while another user has a stale copy. The version check prevents silently overwriting the newer update.",
+    "viva": "Q: Is the audit log tamper-proof? A: It is tamper-evident and guarded against normal update/delete paths; it should not be described as impossible to bypass.",
+    "sources": "backend/*/src/main/resources/db/migration; backend/quotation-service; backend/audit-service; docs/SPEC_COMPLIANCE.md"
+  },
+  {
+    "section": "11",
+    "title": "Key Modules and Features",
+    "script": "The modules follow the procurement journey. Users sign in through a common identity service. Administrators approve suppliers and maintain master data. Buyers create RFQs and vendors upload quotations. The extraction and review module structures offers; comparison ranks them for review. Managers decide and can download an award summary. Dashboards and Sahayak provide role-specific visibility and read-only assistance.",
+    "terms": "Sahayak can prepare a draft from pasted text, but the buyer or administrator reviews the fields and explicitly creates the RFQ. It cannot approve or award.",
+    "example": "The buyer can start an RFQ from typed fields or ask Sahayak for a suggested draft; only the user’s explicit create action saves it.",
+    "viva": "Q: Which module makes the final decision? A: The approval module records a decision by an authorized manager; comparison is advisory.",
+    "sources": "frontend/src/pages; backend/*/src/main/java; docs/SUTRA_PROJECT_GUIDE.md"
+  },
+  {
+    "section": "12",
+    "title": "AI Integration, Usage and Safety",
+    "script": "Java’s GroqQuotationExtractor sends extracted text to Groq through GroqClient and requests structured output under a strict JSON schema. Python FastAPI parses PDF, Excel and Word formats, provides a rules-based reader and matching endpoint. Scanned PDFs can go through PDFBox and local Tesseract before extraction. Java validates the result, matches items and recalculates values. Prompt instructions tell the model to ignore commands inside vendor files, but that is not a complete prompt-injection defense. Sahayak is a separate staff assistant that uses current application context and can propose RFQ drafts; it does not save or approve them automatically.",
+    "terms": "The configured active provider is Groq. The default model is openai/gpt-oss-120b with configured fallbacks openai/gpt-oss-20b and qwen/qwen3.8-27b. Python does not call Groq. Manual correction and rules-based fallback are available.",
+    "example": "A vendor document contains a sentence telling the AI to change the price. The extractor is instructed to treat document text as data, then Java recalculates and the buyer reviews any discrepancy.",
+    "viva": "Q: Is prompt injection fully prevented? A: No. Schema and prompt controls reduce risk, but cannot guarantee immunity. Q: Can the AI approve a vendor? A: No; the backend requires an authorized human decision.",
+    "sources": "backend/extraction-service/src/main/java/com/sutra/extraction/client/GroqClient.java; GroqQuotationExtractor.java; ExtractionSchema.java; ai/app/main.py; ai/app/parsers.py; backend/reporting-service/src/main/java/com/sutra/reporting/service/impl/AssistantServiceImpl.java"
+  },
+  {
+    "section": "13",
+    "title": "Security and Data Integrity",
+    "script": "Passwords are verified with BCrypt. The auth service issues an HS256-signed JWT, which is signed rather than encrypted. User tokens last eight hours and internal service tokens five minutes. The gateway checks signature, activity and token version, while backend services enforce role and record access. Login has a default five-failure lockout for fifteen minutes; public login/signup endpoints are limited to twenty requests per minute per IP. Upload checks sanitize names, verify extensions and file signatures, validate Office packages and enforce a 20 MB limit. SHA-256 digests are stored for uploaded files, but duplicate detection is not implemented.",
+    "terms": "Money uses BigDecimal and PostgreSQL NUMERIC with HALF_UP rounding. Audit history uses an outbox and a SHA-256 hash chain with database protections; call it tamper-evident, not impossible to tamper with. No antivirus scan was verified.",
+    "example": "A vendor can access its own quotation but not another vendor’s files. The record-level check applies in addition to the role.",
+    "viva": "Q: Is the JWT encrypted? A: No, it is signed with HS256. Q: Does a SHA-256 digest block duplicate files? A: No; the reviewed path stores the digest but does not reject duplicates. Q: Does upload validation replace antivirus? A: No.",
+    "sources": "backend/auth-service; backend/gateway; backend/sutra-common; backend/document-service; backend/quotation-service; backend/audit-service; docs/SPEC_COMPLIANCE.md"
+  },
+  {
+    "section": "14",
+    "title": "Testing, Validation and Results",
+    "script": "The recorded test results are shown by category rather than combined into a single total. The frontend has 52 source test declarations across ten files. The documented backend result is 256 tests with no failures or errors and one skipped OCR test; Maven reported BUILD SUCCESS. Python has 38 passing tests. The acceptance run recorded 75 of 75 checks passing on 10 November 2026. These are prior results, not a new run for this presentation. The frontend README says 54, which differs from the current source declarations, and checked-in build reports do not reconcile with the documented backend total; reconcile before presenting the figures as current.",
+    "terms": "JUnit and Mockito test Java services, pytest tests Python parsing and matching, and Vitest with React Testing Library tests frontend behavior. One scanned-page OCR test was skipped because Tesseract was unavailable. Test counts do not imply a coverage percentage.",
+    "example": "The acceptance scenario checks a buyer request, three vendor quotations, extraction and comparison, warranty warnings, manager approval, PDF output and audit history.",
+    "viva": "Q: Was 75/75 rerun for this deck? A: No, it is a previously recorded run dated 10 November 2026. Q: Why is an OCR test skipped? A: Tesseract was unavailable in that test environment.",
+    "sources": "docs/SPEC_COMPLIANCE.md; docs/ACCEPTANCE_RESULTS.md; Testing-Documentation/SUTRA_Test_Execution_Summary.md; frontend/src/**/*.test.*; backend/extraction-service/src/test"
+  },
+  {
+    "section": "15",
+    "title": "Live System Demonstration",
+    "script": "Use a prepared RFQ and prepared supplier files. Log in with verified demo credentials kept off-screen. Show the dashboard, open the RFQ as the buyer, submit a file through a vendor account, inspect the extracted values and flags, compare offers, then record a decision as the manager and open the audit history. Allow time for extraction and avoid creating unnecessary test data in a live database.",
+    "terms": "A live Groq request needs a configured key and network. Scanned-PDF OCR needs local Tesseract and language data. PostgreSQL, Spring services and the Python parser also need to be running.",
+    "example": "If Groq is unavailable, AUTO can continue to the rules engine; if OCR is unavailable, use a text-based PDF or prepared acceptance evidence.",
+    "viva": "Q: What is the contingency if the app is unavailable? A: Show genuine screenshots or the recorded acceptance evidence and state clearly that the live system is unavailable. Do not invent credentials.",
+    "sources": "frontend/src/App.jsx; docs/ACCEPTANCE_RESULTS.md; backend/extraction-service; ai/app/main.py"
+  },
+  {
+    "section": "16",
+    "title": "Challenges Faced",
+    "script": "Vendor documents vary in format, terminology and quality. Scanned PDFs introduce OCR uncertainty. Item descriptions need normalization and fuzzy matching without merging unrelated products. Financial totals must be recalculated exactly. The microservices must communicate while preserving role and record-level access. The external Groq provider can be rate-limited or unavailable, so the quotation workflow benefits from a rules-based fallback.",
+    "terms": "HybridItemMatcher combines matching strategies. Model output is only candidate data; Java validation remains authoritative. Microservice calls use service authentication.",
+    "example": "A vendor might write “steel coil” while the RFQ uses a material code and grade; a buyer should review ambiguous matching.",
+    "viva": "Q: How does the project reduce errors from the AI? A: It validates extracted fields, matches items, recalculates totals and flags issues for user review.",
+    "sources": "backend/extraction-service; backend/quotation-service; backend/gateway; ai/app; docs/SPEC_COMPLIANCE.md"
+  },
+  {
+    "section": "17",
+    "title": "Limitations and Future Scope",
+    "script": "The current system has clear limits. AI can extract fields incorrectly, and OCR quality depends on scanned document quality, Tesseract and language data. There is no MFA or refresh-token flow; the frontend stores JWTs in sessionStorage. No antivirus scan or email integration was verified, and login lockouts and rate limits use in-memory state. Purchase-order generation and production cloud deployment are not part of the implementation. Future work could add stronger sessions, malware scanning, distributed controls, better OCR, email, purchase orders, ERP integration, cloud deployment and CI/CD.",
+    "terms": "The comparison is advisory. The future scope does not include automated vendor selection; the system should preserve human approval.",
+    "example": "A future malware scan would complement current type, magic-byte and Office package validation; the current validations do not scan for viruses.",
+    "viva": "Q: Which items are implemented today? A: The left column lists limitations of the current reviewed code. The right column is proposed future work, not existing functionality.",
+    "sources": "docs/SPEC_COMPLIANCE.md; backend/gateway; backend/document-service; frontend/src/auth; README.md"
+  },
+  {
+    "section": "18–19",
+    "title": "Conclusion and References",
+    "script": "SUTRA links supplier onboarding and master data to RFQ creation, quotation extraction, validation, comparison and a manager’s final decision. AI reduces repetitive reading, Java recalculates financial values, and the audit history supports traceability. The references on this slide point to official framework and protocol documentation.",
+    "terms": "The project uses a human-in-the-loop procurement model. The technical documents and source repository remain the primary evidence for project-specific behavior.",
+    "example": "The acceptance report documents an end-to-end sample with three vendors, a comparison report, a warranty warning and an explicitly recorded manager award.",
+    "viva": "Q: What is the central design principle? A: AI reads, the backend calculates, and people decide.",
+    "sources": "React docs: https://react.dev/learn; Spring Boot: https://docs.spring.io/spring-boot/reference/index.html; Spring Security: https://docs.spring.io/spring-security/reference/index.html; PostgreSQL: https://www.postgresql.org/docs/current/; FastAPI: https://fastapi.tiangolo.com/; Groq: https://console.groq.com/docs/api-reference; JWT: https://www.rfc-editor.org/info/rfc7519/; JUnit: https://docs.junit.org/current/user-guide/; Mockito: https://site.mockito.org/"
+  },
+  {
+    "section": "20",
+    "title": "Q&A / Thank You",
+    "script": "Thank the audience and invite questions. If asked about model accuracy, security or future features, distinguish implemented behavior from proposed work. Return to the central separation of responsibilities: AI reads, the backend calculates, and people decide.",
+    "terms": "Do not describe the audit chain as impossible to tamper with, and do not claim that SUTRA automatically chooses a supplier.",
+    "example": "For a question about the sample demo, refer to the acceptance run and clearly identify it as previously recorded.",
+    "viva": "Q: What is your main takeaway? A: SUTRA automates document handling and comparison while preserving exact backend calculations and accountable human approval.",
+    "sources": "README.md; docs/ACCEPTANCE_RESULTS.md"
+  }
+]

@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>ServiceCall.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">SUTRA common</a> &gt; <a href="index.source.html" class="el_package">com.sutra.common.client</a> &gt; <span class="el_source">ServiceCall.java</span></div><h1>ServiceCall.java</h1><pre class="source lang-java linenums">package com.sutra.common.client;
+
+import com.sutra.common.error.ApiError;
+import com.sutra.common.error.ServiceUnavailableException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.http.HttpStatus;
+import org.springframework.web.client.RestClientException;
+import org.springframework.web.client.RestClientResponseException;
+
+import java.util.function.Supplier;
+
+/**
+ * Runs one call to another SUTRA service and translates its failures:
+ * &lt;ul&gt;
+ *   &lt;li&gt;4xx with an {@code ApiError} body: {@link RemoteServiceException} with the same status, code and message;&lt;/li&gt;
+ *   &lt;li&gt;5xx, a timeout or an unreachable service: {@link ServiceUnavailableException} naming the service.&lt;/li&gt;
+ * &lt;/ul&gt;
+ * Every client in every service uses this, so a remote error looks the same as a local one.
+ */
+public final class ServiceCall {
+
+<span class="nc" id="L23">    private static final Logger log = LoggerFactory.getLogger(ServiceCall.class);</span>
+
+    private ServiceCall() {
+    }
+
+    public static &lt;T&gt; T call(String service, Supplier&lt;T&gt; call) {
+        try {
+<span class="nc" id="L30">            return call.get();</span>
+<span class="nc" id="L31">        } catch (RestClientResponseException e) {</span>
+<span class="nc" id="L32">            throw translate(service, e);</span>
+<span class="nc" id="L33">        } catch (RestClientException e) {</span>
+<span class="nc" id="L34">            log.warn(&quot;{} unreachable: {}&quot;, service, e.getMessage());</span>
+<span class="nc" id="L35">            throw new ServiceUnavailableException(service, e);</span>
+        }
+    }
+
+    public static void run(String service, Runnable call) {
+<span class="nc" id="L40">        call(service, () -&gt; {</span>
+<span class="nc" id="L41">            call.run();</span>
+<span class="nc" id="L42">            return null;</span>
+        });
+<span class="nc" id="L44">    }</span>
+
+    static RuntimeException translate(String service, RestClientResponseException e) {
+<span class="nc" id="L47">        HttpStatus status = HttpStatus.resolve(e.getStatusCode().value());</span>
+<span class="nc bnc" id="L48" title="All 4 branches missed.">        if (status == null || status.is5xxServerError()) {</span>
+<span class="nc" id="L49">            log.warn(&quot;{} answered {}: {}&quot;, service, e.getStatusCode().value(), e.getMessage());</span>
+<span class="nc" id="L50">            return new ServiceUnavailableException(service, e);</span>
+        }
+<span class="nc" id="L52">        ApiError error = null;</span>
+        try {
+<span class="nc" id="L54">            error = e.getResponseBodyAs(ApiError.class);</span>
+<span class="nc" id="L55">        } catch (RuntimeException ignored) {</span>
+            // not an ApiError body: fall back to the status alone
+        }
+<span class="nc bnc" id="L58" title="All 4 branches missed.">        String code = error != null &amp;&amp; error.code() != null ? error.code() : status.name();</span>
+<span class="nc bnc" id="L59" title="All 4 branches missed.">        String message = error != null &amp;&amp; error.message() != null ? error.message()</span>
+<span class="nc" id="L60">                : &quot;The &quot; + service + &quot; refused the request (&quot; + status.value() + &quot;)&quot;;</span>
+<span class="nc" id="L61">        return new RemoteServiceException(status, code, message);</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.13.202504020838</span></div></body></html>

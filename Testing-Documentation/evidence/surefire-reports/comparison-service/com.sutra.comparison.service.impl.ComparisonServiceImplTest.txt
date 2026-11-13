@@ -1,0 +1,4 @@
+-------------------------------------------------------------------------------
+Test set: com.sutra.comparison.service.impl.ComparisonServiceImplTest
+-------------------------------------------------------------------------------
+Tests run: 6, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 3.885 s -- in com.sutra.comparison.service.impl.ComparisonServiceImplTest

@@ -1,0 +1,114 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>FileContentValidator.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">SUTRA document service</a> &gt; <a href="index.source.html" class="el_package">com.sutra.document.service.internal</a> &gt; <span class="el_source">FileContentValidator.java</span></div><h1>FileContentValidator.java</h1><pre class="source lang-java linenums">package com.sutra.document.service.internal;
+
+import com.sutra.api.enums.FileFormat;
+import com.sutra.document.config.DocumentProperties;
+import com.sutra.document.exception.InvalidQuotationFileException;
+import com.sutra.document.exception.UnsupportedQuotationFileException;
+import java.io.ByteArrayInputStream;
+import java.io.IOException;
+import java.util.Arrays;
+import java.util.Locale;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipInputStream;
+import org.springframework.stereotype.Component;
+
+/**
+ * Validates an uploaded file before it is stored: name, extension, size, and that the bytes really are
+ * the claimed format (magic number plus, for Office files, the expected internal structure).
+ */
+@Component
+public class FileContentValidator {
+
+<span class="fc" id="L22">    private static final byte[] PDF_MAGIC = {'%', 'P', 'D', 'F', '-'};</span>
+<span class="fc" id="L23">    private static final byte[] ZIP_MAGIC = {'P', 'K', 3, 4};</span>
+<span class="fc" id="L24">    private static final byte[] OLE2_MAGIC = {(byte) 0xD0, (byte) 0xCF, 0x11, (byte) 0xE0,</span>
+<span class="fc" id="L25">            (byte) 0xA1, (byte) 0xB1, 0x1A, (byte) 0xE1};</span>
+<span class="fc" id="L26">    private static final int MAX_ZIP_ENTRIES_SCANNED = 2_000;</span>
+
+    private final long maxSizeBytes;
+
+<span class="fc" id="L30">    public FileContentValidator(DocumentProperties properties) {</span>
+<span class="fc" id="L31">        this.maxSizeBytes = properties.maxSizeBytes();</span>
+<span class="fc" id="L32">    }</span>
+
+    /** Returns the detected format, or throws with a message the user can act on. */
+    public FileFormat validate(String originalFileName, byte[] content) {
+<span class="fc" id="L36">        String fileName = sanitiseFileName(originalFileName);</span>
+<span class="fc" id="L37">        String lower = fileName.toLowerCase(Locale.ROOT);</span>
+<span class="fc bfc" id="L38" title="All 2 branches covered.">        if (lower.endsWith(&quot;.doc&quot;)) {</span>
+<span class="fc" id="L39">            throw new UnsupportedQuotationFileException(</span>
+<span class="fc" id="L40">                    &quot;Legacy Word .doc files are not supported. Save the quotation as .docx or PDF and upload again.&quot;);</span>
+        }
+<span class="fc" id="L42">        FileFormat format = FileFormat.fromFileName(fileName).orElseThrow(() -&gt; new UnsupportedQuotationFileException(</span>
+<span class="fc" id="L43">                &quot;Unsupported file type for '&quot; + fileName + &quot;'. Upload a PDF, Excel (.xlsx, .xls) or Word (.docx) file.&quot;));</span>
+
+<span class="pc bpc" id="L45" title="1 of 4 branches missed.">        if (content == null || content.length == 0) {</span>
+<span class="fc" id="L46">            throw new InvalidQuotationFileException(&quot;The file '&quot; + fileName + &quot;' is empty.&quot;);</span>
+        }
+<span class="fc bfc" id="L48" title="All 2 branches covered.">        if (content.length &gt; maxSizeBytes) {</span>
+<span class="fc" id="L49">            throw new InvalidQuotationFileException(&quot;The file '&quot; + fileName + &quot;' is &quot; + toMb(content.length)</span>
+<span class="fc" id="L50">                    + &quot; MB; the maximum allowed is &quot; + toMb(maxSizeBytes) + &quot; MB.&quot;);</span>
+        }
+
+<span class="pc bpc" id="L53" title="2 of 5 branches missed.">        switch (format) {</span>
+<span class="fc" id="L54">            case PDF -&gt; requireMagic(content, PDF_MAGIC, fileName, &quot;PDF&quot;);</span>
+<span class="nc" id="L55">            case XLS -&gt; requireMagic(content, OLE2_MAGIC, fileName, &quot;Excel 97-2003 (.xls)&quot;);</span>
+<span class="fc" id="L56">            case XLSX -&gt; requireOfficeZip(content, &quot;xl/&quot;, fileName, &quot;Excel (.xlsx)&quot;);</span>
+<span class="fc" id="L57">            case DOCX -&gt; requireOfficeZip(content, &quot;word/&quot;, fileName, &quot;Word (.docx)&quot;);</span>
+        }
+<span class="fc" id="L59">        return format;</span>
+    }
+
+    /** Strips any path, control characters and quotes; keeps the name at most 255 characters. */
+    public static String sanitiseFileName(String name) {
+<span class="pc bpc" id="L64" title="2 of 4 branches missed.">        if (name == null || name.isBlank()) {</span>
+<span class="nc" id="L65">            throw new InvalidQuotationFileException(&quot;The uploaded file has no name.&quot;);</span>
+        }
+<span class="fc" id="L67">        String base = name.replace('\\', '/');</span>
+<span class="fc" id="L68">        base = base.substring(base.lastIndexOf('/') + 1);</span>
+<span class="fc" id="L69">        base = base.replaceAll(&quot;[\\p{Cntrl}\&quot;&lt;&gt;|*?:]&quot;, &quot;_&quot;).trim();</span>
+<span class="pc bpc" id="L70" title="2 of 6 branches missed.">        if (base.isEmpty() || base.equals(&quot;.&quot;) || base.equals(&quot;..&quot;)) {</span>
+<span class="fc" id="L71">            throw new InvalidQuotationFileException(&quot;The uploaded file name is not valid.&quot;);</span>
+        }
+<span class="pc bpc" id="L73" title="1 of 2 branches missed.">        if (base.length() &gt; 255) {</span>
+<span class="nc" id="L74">            int dot = base.lastIndexOf('.');</span>
+<span class="nc bnc" id="L75" title="All 2 branches missed.">            String ext = dot &gt; 0 ? base.substring(dot) : &quot;&quot;;</span>
+<span class="nc" id="L76">            base = base.substring(0, 255 - ext.length()) + ext;</span>
+        }
+<span class="fc" id="L78">        return base;</span>
+    }
+
+    private static void requireMagic(byte[] content, byte[] magic, String fileName, String label) {
+<span class="pc bpc" id="L82" title="1 of 4 branches missed.">        if (content.length &lt; magic.length || !Arrays.equals(Arrays.copyOf(content, magic.length), magic)) {</span>
+<span class="fc" id="L83">            throw new InvalidQuotationFileException(&quot;'&quot; + fileName + &quot;' is not a valid &quot; + label</span>
+                    + &quot; file. It may be corrupt or renamed from another format.&quot;);
+        }
+<span class="fc" id="L86">    }</span>
+
+    private static void requireOfficeZip(byte[] content, String requiredFolder, String fileName, String label) {
+<span class="fc" id="L89">        requireMagic(content, ZIP_MAGIC, fileName, label);</span>
+<span class="fc" id="L90">        boolean contentTypes = false;</span>
+<span class="fc" id="L91">        boolean folder = false;</span>
+<span class="fc" id="L92">        try (ZipInputStream zip = new ZipInputStream(new ByteArrayInputStream(content))) {</span>
+            ZipEntry entry;
+<span class="fc" id="L94">            int scanned = 0;</span>
+<span class="pc bpc" id="L95" title="1 of 4 branches missed.">            while ((entry = zip.getNextEntry()) != null &amp;&amp; scanned++ &lt; MAX_ZIP_ENTRIES_SCANNED) {</span>
+<span class="fc" id="L96">                String name = entry.getName();</span>
+<span class="fc" id="L97">                contentTypes |= name.equals(&quot;[Content_Types].xml&quot;);</span>
+<span class="fc" id="L98">                folder |= name.startsWith(requiredFolder);</span>
+<span class="pc bpc" id="L99" title="1 of 4 branches missed.">                if (contentTypes &amp;&amp; folder) {</span>
+<span class="fc" id="L100">                    return;</span>
+                }
+            }
+<span class="nc" id="L103">        } catch (IOException | IllegalArgumentException e) {</span>
+<span class="nc" id="L104">            throw new InvalidQuotationFileException(&quot;'&quot; + fileName + &quot;' could not be read as &quot; + label</span>
+                    + &quot;. The file appears to be corrupt.&quot;);
+        }
+<span class="fc" id="L107">        throw new InvalidQuotationFileException(&quot;'&quot; + fileName + &quot;' is not a valid &quot; + label + &quot; document.&quot;);</span>
+    }
+
+    private static String toMb(long bytes) {
+<span class="fc" id="L111">        return String.format(Locale.ROOT, &quot;%.1f&quot;, bytes / (1024.0 * 1024.0));</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.13.202504020838</span></div></body></html>

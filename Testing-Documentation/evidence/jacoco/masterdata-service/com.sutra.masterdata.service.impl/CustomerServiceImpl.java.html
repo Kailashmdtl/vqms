@@ -1,0 +1,109 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>CustomerServiceImpl.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">SUTRA master data service</a> &gt; <a href="index.source.html" class="el_package">com.sutra.masterdata.service.impl</a> &gt; <span class="el_source">CustomerServiceImpl.java</span></div><h1>CustomerServiceImpl.java</h1><pre class="source lang-java linenums">package com.sutra.masterdata.service.impl;
+
+import com.sutra.masterdata.service.internal.CodeGenerator;
+import com.sutra.masterdata.service.BusinessEntityService;
+import com.sutra.masterdata.service.CustomerService;
+import com.sutra.common.audit.AuditService;
+
+import static com.sutra.common.audit.AuditService.details;
+
+import com.sutra.masterdata.entity.Customer;
+import com.sutra.common.error.BusinessRuleException;
+import com.sutra.masterdata.exception.CustomerNotFoundException;
+import com.sutra.common.error.DuplicateResourceException;
+import com.sutra.masterdata.repository.CustomerRepository;
+import com.sutra.masterdata.client.UsageClient;
+import com.sutra.masterdata.dto.request.MasterDataRequests.CustomerRequest;
+import com.sutra.masterdata.dto.response.MasterDataResponses.CustomerResponse;
+import com.sutra.common.web.PageResponse;
+import com.sutra.common.util.Text;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Sort;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+@Service
+@Transactional
+public class CustomerServiceImpl implements CustomerService {
+
+    static final String AUDIT_TYPE = &quot;CUSTOMER&quot;;
+
+    private final CustomerRepository customerRepository;
+    private final BusinessEntityService entityService;
+    private final UsageClient usage;
+    private final AuditService auditService;
+
+<span class="fc" id="L36">    public CustomerServiceImpl(CustomerRepository customerRepository, BusinessEntityService entityService,</span>
+                           UsageClient usage, AuditService auditService) {
+<span class="fc" id="L38">        this.customerRepository = customerRepository;</span>
+<span class="fc" id="L39">        this.entityService = entityService;</span>
+<span class="fc" id="L40">        this.usage = usage;</span>
+<span class="fc" id="L41">        this.auditService = auditService;</span>
+<span class="fc" id="L42">    }</span>
+
+    @Transactional(readOnly = true)
+    @Override
+    public PageResponse&lt;CustomerResponse&gt; search(String q, int page, int size) {
+<span class="nc" id="L47">        var pageable = PageRequest.of(page, Math.min(size, 200), Sort.by(Customer::getName));</span>
+<span class="nc" id="L48">        return PageResponse.of(customerRepository.search(Text.blankToNull(q), pageable), CustomerResponse::from);</span>
+    }
+
+    @Transactional(readOnly = true)
+    @Override
+    public CustomerResponse get(Long id) {
+<span class="nc" id="L54">        return CustomerResponse.from(find(id));</span>
+    }
+
+    @Override
+    public CustomerResponse create(CustomerRequest request) {
+<span class="fc" id="L59">        String code = CodeGenerator.normalise(request.code());</span>
+<span class="pc bpc" id="L60" title="1 of 2 branches missed.">        if (customerRepository.existsByCodeIgnoreCase(code)) {</span>
+<span class="nc" id="L61">            throw new DuplicateResourceException(&quot;A customer with code &quot; + code + &quot; already exists&quot;);</span>
+        }
+<span class="fc" id="L63">        Customer customer = new Customer();</span>
+<span class="fc" id="L64">        apply(customer, request, code);</span>
+<span class="fc" id="L65">        customer = customerRepository.save(customer);</span>
+<span class="fc" id="L66">        auditService.record(AUDIT_TYPE, customer.getId(), &quot;CREATED&quot;, details(&quot;code&quot;, code, &quot;name&quot;, customer.getName()));</span>
+<span class="fc" id="L67">        return CustomerResponse.from(customer);</span>
+    }
+
+    @Override
+    public CustomerResponse update(Long id, CustomerRequest request) {
+<span class="nc" id="L72">        Customer customer = find(id);</span>
+<span class="nc" id="L73">        String code = CodeGenerator.normalise(request.code());</span>
+<span class="nc bnc" id="L74" title="All 2 branches missed.">        if (customerRepository.existsByCodeIgnoreCaseAndIdNot(code, id)) {</span>
+<span class="nc" id="L75">            throw new DuplicateResourceException(&quot;A customer with code &quot; + code + &quot; already exists&quot;);</span>
+        }
+<span class="nc" id="L77">        apply(customer, request, code);</span>
+<span class="nc" id="L78">        auditService.record(AUDIT_TYPE, id, &quot;UPDATED&quot;, details(&quot;code&quot;, code, &quot;active&quot;, customer.isActive()));</span>
+<span class="nc" id="L79">        return CustomerResponse.from(customer);</span>
+    }
+
+    @Override
+    public void delete(Long id) {
+<span class="fc" id="L84">        Customer customer = find(id);</span>
+<span class="pc bpc" id="L85" title="1 of 2 branches missed.">        if (usage.procurementUsage(&quot;customers&quot;, id).inUse()) {</span>
+<span class="fc" id="L86">            throw new BusinessRuleException(&quot;CUSTOMER_IN_USE&quot;,</span>
+<span class="fc" id="L87">                    customer.getName() + &quot; is referenced by purchase requests; deactivate it instead&quot;);</span>
+        }
+<span class="nc" id="L89">        customerRepository.delete(customer);</span>
+<span class="nc" id="L90">        auditService.record(AUDIT_TYPE, id, &quot;DELETED&quot;, details(&quot;code&quot;, customer.getCode()));</span>
+<span class="nc" id="L91">    }</span>
+
+    @Override
+    public Customer find(Long id) {
+<span class="fc" id="L95">        return customerRepository.findById(id).orElseThrow(() -&gt; new CustomerNotFoundException(id));</span>
+    }
+
+    private void apply(Customer customer, CustomerRequest request, String code) {
+<span class="fc" id="L99">        customer.setCode(code);</span>
+<span class="fc" id="L100">        customer.setName(request.name().trim());</span>
+<span class="pc bpc" id="L101" title="1 of 2 branches missed.">        customer.setEntity(request.entityId() == null ? null : entityService.find(request.entityId()));</span>
+<span class="fc" id="L102">        customer.setContactPerson(Text.blankToNull(request.contactPerson()));</span>
+<span class="fc" id="L103">        customer.setEmail(Text.blankToNull(request.email()));</span>
+<span class="fc" id="L104">        customer.setPhone(Text.blankToNull(request.phone()));</span>
+<span class="fc" id="L105">        customer.setAddress(Text.blankToNull(request.address()));</span>
+<span class="pc bpc" id="L106" title="3 of 4 branches missed.">        customer.setActive(request.active() == null || request.active());</span>
+<span class="fc" id="L107">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.13.202504020838</span></div></body></html>

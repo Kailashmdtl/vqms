@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>DecisionClient.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">SUTRA quotation service</a> &gt; <a href="index.source.html" class="el_package">com.sutra.quotation.client</a> &gt; <span class="el_source">DecisionClient.java</span></div><h1>DecisionClient.java</h1><pre class="source lang-java linenums">package com.sutra.quotation.client;
+
+import com.sutra.api.decision.DecisionResponses.ApprovalResponse;
+import com.sutra.api.extraction.ExtractionChoice;
+import com.sutra.api.internal.InternalContracts.ExtractionTask;
+import com.sutra.common.client.InternalRestClients;
+import com.sutra.common.client.ServiceCall;
+import com.sutra.common.client.ServiceUrls;
+import org.springframework.core.ParameterizedTypeReference;
+import org.springframework.stereotype.Component;
+import org.springframework.web.client.RestClient;
+
+import java.util.Collection;
+import java.util.List;
+import java.util.Map;
+import java.util.function.Function;
+import java.util.stream.Collectors;
+
+/** The services downstream of a quotation: extraction (reading), comparison (reports) and approval (awards). */
+@Component
+public class DecisionClient {
+
+    private final RestClient extraction;
+    private final RestClient comparison;
+    private final RestClient approval;
+
+<span class="nc" id="L27">    public DecisionClient(InternalRestClients clients, ServiceUrls urls) {</span>
+<span class="nc" id="L28">        this.extraction = clients.forBaseUrl(urls.extraction());</span>
+<span class="nc" id="L29">        this.comparison = clients.forBaseUrl(urls.comparison());</span>
+<span class="nc" id="L30">        this.approval = clients.forBaseUrl(urls.approval());</span>
+<span class="nc" id="L31">    }</span>
+
+    /** Refuses an engine/model that cannot be used (e.g. GROQ without a key), before anything is stored. */
+    public void checkEngine(ExtractionChoice choice) {
+<span class="nc" id="L35">        ServiceCall.run(&quot;extraction service&quot;, () -&gt; extraction.post().uri(&quot;/internal/extractions/check&quot;)</span>
+<span class="nc" id="L36">                .body(new ExtractionTask(null, choice.engine(), choice.model())).retrieve().toBodilessEntity());</span>
+<span class="nc" id="L37">    }</span>
+
+    /** Queues a reading of the quotation. */
+    public void read(Long quotationId, ExtractionChoice choice) {
+<span class="nc" id="L41">        ServiceCall.run(&quot;extraction service&quot;, () -&gt; extraction.post().uri(&quot;/internal/extractions&quot;)</span>
+<span class="nc" id="L42">                .body(new ExtractionTask(quotationId, choice.engine(), choice.model())).retrieve().toBodilessEntity());</span>
+<span class="nc" id="L43">    }</span>
+
+    /** How many saved comparison reports include the quotation (it is then kept for the audit trail). */
+    public long comparisonReferences(Long quotationId) {
+<span class="nc" id="L47">        Long count = ServiceCall.call(&quot;comparison service&quot;, () -&gt; comparison.get()</span>
+<span class="nc" id="L48">                .uri(&quot;/internal/quotations/{id}/comparison-count&quot;, quotationId).retrieve().body(Long.class));</span>
+<span class="nc bnc" id="L49" title="All 2 branches missed.">        return count == null ? 0 : count;</span>
+    }
+
+    /** The latest decision of each RFQ that has one. */
+    public Map&lt;Long, ApprovalResponse&gt; latestDecisions(Collection&lt;Long&gt; rfqIds) {
+<span class="nc bnc" id="L54" title="All 2 branches missed.">        if (rfqIds.isEmpty()) {</span>
+<span class="nc" id="L55">            return Map.of();</span>
+        }
+<span class="nc" id="L57">        List&lt;ApprovalResponse&gt; found = ServiceCall.call(&quot;approval service&quot;, () -&gt; approval.get()</span>
+<span class="nc" id="L58">                .uri(b -&gt; b.path(&quot;/internal/approvals/latest&quot;).queryParam(&quot;rfqIds&quot;, rfqIds.toArray()).build())</span>
+<span class="nc" id="L59">                .retrieve().body(new ParameterizedTypeReference&lt;List&lt;ApprovalResponse&gt;&gt;() { }));</span>
+<span class="nc bnc" id="L60" title="All 2 branches missed.">        return found == null ? Map.of()</span>
+<span class="nc" id="L61">                : found.stream().collect(Collectors.toMap(ApprovalResponse::purchaseRequestId, Function.identity()));</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.13.202504020838</span></div></body></html>

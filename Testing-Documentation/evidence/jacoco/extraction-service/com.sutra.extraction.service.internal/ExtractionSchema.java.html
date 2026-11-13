@@ -1,0 +1,88 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>ExtractionSchema.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">SUTRA extraction service</a> &gt; <a href="index.source.html" class="el_package">com.sutra.extraction.service.internal</a> &gt; <span class="el_source">ExtractionSchema.java</span></div><h1>ExtractionSchema.java</h1><pre class="source lang-java linenums">package com.sutra.extraction.service.internal;
+
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+
+/**
+ * JSON Schema for {@link ExtractedQuotation}, sent to Groq as the strict structured-output contract.
+ * Optional values are nullable ({@code [&quot;number&quot;,&quot;null&quot;]}) and still required, so the model writes null
+ * instead of guessing. A unit test keeps the property names in step with the record.
+ */
+public final class ExtractionSchema {
+
+<span class="fc" id="L14">    public static final Map&lt;String, Object&gt; SCHEMA = buildSchema();</span>
+
+    private ExtractionSchema() {
+    }
+
+    private static Map&lt;String, Object&gt; buildSchema() {
+<span class="fc" id="L20">        Map&lt;String, Object&gt; item = object(props(</span>
+<span class="fc" id="L21">                &quot;itemCode&quot;, nullable(&quot;string&quot;, &quot;Item code as printed (e.g. IT-001), usually the buyer's code&quot;),</span>
+<span class="fc" id="L22">                &quot;description&quot;, prop(&quot;string&quot;, &quot;Item description including make, model and key specifications&quot;),</span>
+<span class="fc" id="L23">                &quot;quantity&quot;, nullable(&quot;number&quot;, &quot;Quantity as printed&quot;),</span>
+<span class="fc" id="L24">                &quot;unitOfMeasure&quot;, nullable(&quot;string&quot;, &quot;Unit of measure, e.g. Nos, kg, m, set, license&quot;),</span>
+<span class="fc" id="L25">                &quot;unitPrice&quot;, nullable(&quot;number&quot;, &quot;Price per unit before discount and tax&quot;),</span>
+<span class="fc" id="L26">                &quot;discountPercent&quot;, nullable(&quot;number&quot;, &quot;Discount percentage 0-100, if stated&quot;),</span>
+<span class="fc" id="L27">                &quot;discountAmount&quot;, nullable(&quot;number&quot;, &quot;Discount amount for the line, if stated&quot;),</span>
+<span class="fc" id="L28">                &quot;taxPercent&quot;, nullable(&quot;number&quot;, &quot;Tax percentage 0-100 for the line, if stated&quot;),</span>
+<span class="fc" id="L29">                &quot;taxAmount&quot;, nullable(&quot;number&quot;, &quot;Tax amount for the line, if stated&quot;),</span>
+<span class="fc" id="L30">                &quot;lineTotal&quot;, nullable(&quot;number&quot;, &quot;Line total exactly as printed&quot;),</span>
+<span class="fc" id="L31">                &quot;confidence&quot;, prop(&quot;number&quot;, &quot;0 to 1: how sure you are this line was read correctly&quot;),</span>
+<span class="fc" id="L32">                &quot;notes&quot;, nullable(&quot;string&quot;, &quot;Anything unusual about this line&quot;)));</span>
+
+<span class="fc" id="L34">        Map&lt;String, Object&gt; items = new LinkedHashMap&lt;&gt;();</span>
+<span class="fc" id="L35">        items.put(&quot;type&quot;, &quot;array&quot;);</span>
+<span class="fc" id="L36">        items.put(&quot;description&quot;, &quot;Every priced line item, in document order&quot;);</span>
+<span class="fc" id="L37">        items.put(&quot;items&quot;, item);</span>
+
+<span class="fc" id="L39">        Map&lt;String, Object&gt; warnings = new LinkedHashMap&lt;&gt;();</span>
+<span class="fc" id="L40">        warnings.put(&quot;type&quot;, &quot;array&quot;);</span>
+<span class="fc" id="L41">        warnings.put(&quot;description&quot;, &quot;Ambiguous, illegible or conflicting values a reviewer should check&quot;);</span>
+<span class="fc" id="L42">        warnings.put(&quot;items&quot;, Map.of(&quot;type&quot;, &quot;string&quot;));</span>
+
+<span class="fc" id="L44">        return object(props(</span>
+<span class="fc" id="L45">                &quot;vendorName&quot;, nullable(&quot;string&quot;, &quot;Vendor/supplier company name as printed&quot;),</span>
+<span class="fc" id="L46">                &quot;quotationNumber&quot;, nullable(&quot;string&quot;, &quot;Quotation or reference number&quot;),</span>
+<span class="fc" id="L47">                &quot;quotationDate&quot;, nullable(&quot;string&quot;, &quot;Quotation date as YYYY-MM-DD&quot;),</span>
+<span class="fc" id="L48">                &quot;validUntil&quot;, nullable(&quot;string&quot;, &quot;Last date the offer is valid, YYYY-MM-DD&quot;),</span>
+<span class="fc" id="L49">                &quot;currency&quot;, nullable(&quot;string&quot;, &quot;ISO 4217 currency code, e.g. INR, USD&quot;),</span>
+<span class="fc" id="L50">                &quot;items&quot;, items,</span>
+<span class="fc" id="L51">                &quot;subtotal&quot;, nullable(&quot;number&quot;, &quot;Subtotal as printed (usually before tax)&quot;),</span>
+<span class="fc" id="L52">                &quot;discountTotal&quot;, nullable(&quot;number&quot;, &quot;Total discount as printed&quot;),</span>
+<span class="fc" id="L53">                &quot;taxTotal&quot;, nullable(&quot;number&quot;, &quot;Total tax as printed (GST/VAT)&quot;),</span>
+<span class="fc" id="L54">                &quot;grandTotal&quot;, nullable(&quot;number&quot;, &quot;Grand total / amount payable as printed&quot;),</span>
+<span class="fc" id="L55">                &quot;deliveryTerms&quot;, nullable(&quot;string&quot;, &quot;Delivery terms, lead time, shipping&quot;),</span>
+<span class="fc" id="L56">                &quot;paymentTerms&quot;, nullable(&quot;string&quot;, &quot;Payment terms&quot;),</span>
+<span class="fc" id="L57">                &quot;warrantyTerms&quot;, nullable(&quot;string&quot;, &quot;Warranty or guarantee terms&quot;),</span>
+<span class="fc" id="L58">                &quot;notes&quot;, nullable(&quot;string&quot;, &quot;Other commercial notes such as freight or installation charges&quot;),</span>
+<span class="fc" id="L59">                &quot;overallConfidence&quot;, prop(&quot;number&quot;, &quot;0 to 1: how sure you are the whole extraction is correct&quot;),</span>
+<span class="fc" id="L60">                &quot;warnings&quot;, warnings));</span>
+    }
+
+    static Map&lt;String, Object&gt; object(Map&lt;String, Object&gt; properties) {
+<span class="fc" id="L64">        Map&lt;String, Object&gt; schema = new LinkedHashMap&lt;&gt;();</span>
+<span class="fc" id="L65">        schema.put(&quot;type&quot;, &quot;object&quot;);</span>
+<span class="fc" id="L66">        schema.put(&quot;properties&quot;, properties);</span>
+<span class="fc" id="L67">        schema.put(&quot;required&quot;, List.copyOf(properties.keySet()));</span>
+<span class="fc" id="L68">        schema.put(&quot;additionalProperties&quot;, false);</span>
+<span class="fc" id="L69">        return schema;</span>
+    }
+
+    static Map&lt;String, Object&gt; props(Object... nameSchemaPairs) {
+<span class="fc" id="L73">        Map&lt;String, Object&gt; properties = new LinkedHashMap&lt;&gt;();</span>
+<span class="fc bfc" id="L74" title="All 2 branches covered.">        for (int i = 0; i &lt; nameSchemaPairs.length; i += 2) {</span>
+<span class="fc" id="L75">            properties.put((String) nameSchemaPairs[i], nameSchemaPairs[i + 1]);</span>
+        }
+<span class="fc" id="L77">        return properties;</span>
+    }
+
+    static Map&lt;String, Object&gt; prop(String type, String description) {
+<span class="fc" id="L81">        return Map.of(&quot;type&quot;, type, &quot;description&quot;, description);</span>
+    }
+
+    static Map&lt;String, Object&gt; nullable(String type, String description) {
+<span class="fc" id="L85">        return Map.of(&quot;type&quot;, List.of(type, &quot;null&quot;), &quot;description&quot;, description);</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.13.202504020838</span></div></body></html>

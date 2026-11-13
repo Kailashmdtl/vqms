@@ -1,0 +1,194 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>PdfOcrReader.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">SUTRA extraction service</a> &gt; <a href="index.source.html" class="el_package">com.sutra.extraction.service.internal</a> &gt; <span class="el_source">PdfOcrReader.java</span></div><h1>PdfOcrReader.java</h1><pre class="source lang-java linenums">package com.sutra.extraction.service.internal;
+
+import com.sutra.extraction.config.AiProperties;
+import com.sutra.extraction.exception.AiServiceException;
+import java.awt.image.BufferedImage;
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.concurrent.TimeUnit;
+import javax.imageio.ImageIO;
+import org.apache.pdfbox.Loader;
+import org.apache.pdfbox.pdmodel.PDDocument;
+import org.apache.pdfbox.rendering.ImageType;
+import org.apache.pdfbox.rendering.PDFRenderer;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Component;
+
+/**
+ * Reads scanned PDFs locally and for free: Apache PDFBox renders each page to a greyscale image and the Tesseract
+ * OCR engine (an installed executable, called as a separate process) turns it into text. Nothing leaves the machine.
+ *
+ * &lt;p&gt;Images are written to a private temporary folder that is deleted afterwards. File contents are never logged.&lt;/p&gt;
+ */
+@Component
+public class PdfOcrReader {
+
+<span class="fc" id="L33">    private static final Logger log = LoggerFactory.getLogger(PdfOcrReader.class);</span>
+<span class="fc" id="L34">    private static final List&lt;String&gt; WINDOWS_LOCATIONS = List.of(</span>
+<span class="fc" id="L35">            &quot;C:\\Program Files\\Tesseract-OCR\\tesseract.exe&quot;,</span>
+<span class="fc" id="L36">            &quot;C:\\Program Files (x86)\\Tesseract-OCR\\tesseract.exe&quot;);</span>
+
+    private final AiProperties.Ocr config;
+    private volatile String executable;
+
+<span class="fc" id="L41">    public PdfOcrReader(AiProperties properties) {</span>
+<span class="fc" id="L42">        this.config = properties.ai().ocr();</span>
+<span class="fc" id="L43">    }</span>
+
+    /** True when OCR is enabled and a Tesseract executable was found. */
+    public boolean isAvailable() {
+<span class="pc bpc" id="L47" title="1 of 4 branches missed.">        return config.enabled() &amp;&amp; tesseract() != null;</span>
+    }
+
+    /** &quot;Tesseract (eng)&quot;, for messages and the dashboard. */
+    public String describe() {
+<span class="nc" id="L52">        return &quot;Tesseract OCR (&quot; + config.languages() + &quot;)&quot;;</span>
+    }
+
+    /** The text of every page (up to the configured page limit), each page headed &quot;--- page N ---&quot;. */
+    public String read(String fileName, byte[] pdf) {
+<span class="fc" id="L57">        String exe = tesseract();</span>
+<span class="pc bpc" id="L58" title="3 of 4 branches missed.">        if (!config.enabled() || exe == null) {</span>
+<span class="fc" id="L59">            throw new AiServiceException(fileName + &quot; looks scanned (no text layer) and OCR is not available: install &quot;</span>
+                    + &quot;Tesseract OCR or set TESSERACT_PATH, or enter the quotation manually.&quot;);
+        }
+<span class="nc" id="L62">        Path dir = null;</span>
+<span class="nc" id="L63">        try (PDDocument document = Loader.loadPDF(pdf)) {</span>
+<span class="nc" id="L64">            dir = Files.createTempDirectory(&quot;sutra-ocr-&quot;);</span>
+<span class="nc" id="L65">            PDFRenderer renderer = new PDFRenderer(document);</span>
+<span class="nc" id="L66">            int pages = Math.min(document.getNumberOfPages(), config.maxPages());</span>
+<span class="nc" id="L67">            StringBuilder text = new StringBuilder();</span>
+<span class="nc bnc" id="L68" title="All 2 branches missed.">            for (int i = 0; i &lt; pages; i++) {</span>
+<span class="nc" id="L69">                BufferedImage image = renderer.renderImageWithDPI(i, config.dpi(), ImageType.GRAY);</span>
+<span class="nc" id="L70">                Path png = dir.resolve(&quot;page-&quot; + (i + 1) + &quot;.png&quot;);</span>
+<span class="nc" id="L71">                ImageIO.write(image, &quot;png&quot;, png.toFile());</span>
+<span class="nc" id="L72">                text.append(&quot;--- page &quot;).append(i + 1).append(&quot; ---\n&quot;).append(ocr(exe, png)).append('\n');</span>
+            }
+<span class="nc bnc" id="L74" title="All 2 branches missed.">            if (document.getNumberOfPages() &gt; pages) {</span>
+<span class="nc" id="L75">                text.append(&quot;--- only the first &quot;).append(pages).append(&quot; of &quot;).append(document.getNumberOfPages())</span>
+<span class="nc" id="L76">                        .append(&quot; pages were read ---\n&quot;);</span>
+            }
+<span class="nc" id="L78">            log.info(&quot;OCR read {} page(s) of {} ({} characters)&quot;, pages, fileName, text.length());</span>
+<span class="nc" id="L79">            return text.toString();</span>
+<span class="nc" id="L80">        } catch (IOException e) {</span>
+<span class="nc" id="L81">            throw new AiServiceException(&quot;Could not OCR &quot; + fileName + &quot;: &quot; + e.getClass().getSimpleName(), e);</span>
+        } finally {
+<span class="nc" id="L83">            deleteQuietly(dir);</span>
+        }
+    }
+
+    /** Runs &quot;tesseract page.png stdout -l eng --psm 6&quot; (psm 6: a uniform block of text, good for tables). */
+    private String ocr(String exe, Path png) throws IOException {
+<span class="nc" id="L89">        Process process = new ProcessBuilder(exe, png.toString(), &quot;stdout&quot;, &quot;-l&quot;, config.languages(), &quot;--psm&quot;, &quot;6&quot;)</span>
+<span class="nc" id="L90">                .redirectErrorStream(false)</span>
+<span class="nc" id="L91">                .start();</span>
+<span class="nc" id="L92">        process.getOutputStream().close();</span>
+        byte[] out;
+<span class="nc" id="L94">        try (InputStream stdout = process.getInputStream(); InputStream stderr = process.getErrorStream()) {</span>
+<span class="nc" id="L95">            ByteArrayOutputStream buffer = new ByteArrayOutputStream();</span>
+<span class="nc" id="L96">            Thread drainErr = new Thread(() -&gt; {</span>
+                try {
+<span class="nc" id="L98">                    stderr.transferTo(OutputStreamSink.INSTANCE);</span>
+<span class="nc" id="L99">                } catch (IOException ignored) {</span>
+                    // diagnostics only
+                }
+<span class="nc" id="L102">            }, &quot;tesseract-stderr&quot;);</span>
+<span class="nc" id="L103">            drainErr.setDaemon(true);</span>
+<span class="nc" id="L104">            drainErr.start();</span>
+<span class="nc" id="L105">            stdout.transferTo(buffer);</span>
+<span class="nc" id="L106">            out = buffer.toByteArray();</span>
+<span class="nc" id="L107">            drainErr.join(TimeUnit.SECONDS.toMillis(5));</span>
+<span class="nc" id="L108">        } catch (InterruptedException e) {</span>
+<span class="nc" id="L109">            Thread.currentThread().interrupt();</span>
+<span class="nc" id="L110">            process.destroyForcibly();</span>
+<span class="nc" id="L111">            throw new AiServiceException(&quot;Interrupted while running OCR&quot;, e);</span>
+        }
+        try {
+<span class="nc bnc" id="L114" title="All 2 branches missed.">            if (!process.waitFor(config.timeoutSeconds(), TimeUnit.SECONDS)) {</span>
+<span class="nc" id="L115">                process.destroyForcibly();</span>
+<span class="nc" id="L116">                throw new AiServiceException(&quot;OCR took longer than &quot; + config.timeoutSeconds() + &quot; seconds for one page&quot;);</span>
+            }
+<span class="nc" id="L118">        } catch (InterruptedException e) {</span>
+<span class="nc" id="L119">            Thread.currentThread().interrupt();</span>
+<span class="nc" id="L120">            process.destroyForcibly();</span>
+<span class="nc" id="L121">            throw new AiServiceException(&quot;Interrupted while running OCR&quot;, e);</span>
+        }
+<span class="nc bnc" id="L123" title="All 2 branches missed.">        if (process.exitValue() != 0) {</span>
+<span class="nc" id="L124">            throw new AiServiceException(&quot;Tesseract OCR failed (exit code &quot; + process.exitValue() + &quot;). Check that the &quot;</span>
+<span class="nc" id="L125">                    + &quot;language data for '&quot; + config.languages() + &quot;' is installed.&quot;);</span>
+        }
+<span class="nc" id="L127">        return new String(out, StandardCharsets.UTF_8);</span>
+    }
+
+    /** The configured path, else the usual install folders, else &quot;tesseract&quot; on the PATH; null when none works. */
+    String tesseract() {
+<span class="fc" id="L132">        String found = executable;</span>
+<span class="pc bpc" id="L133" title="1 of 2 branches missed.">        if (found != null) {</span>
+<span class="nc" id="L134">            return found;</span>
+        }
+<span class="fc" id="L136">        List&lt;String&gt; candidates = new ArrayList&lt;&gt;();</span>
+<span class="pc bpc" id="L137" title="3 of 4 branches missed.">        if (config.tesseractPath() != null &amp;&amp; !config.tesseractPath().isBlank()) {</span>
+<span class="nc" id="L138">            candidates.add(config.tesseractPath().trim());</span>
+        }
+<span class="fc" id="L140">        candidates.addAll(WINDOWS_LOCATIONS);</span>
+<span class="fc" id="L141">        candidates.add(&quot;/usr/bin/tesseract&quot;);</span>
+<span class="fc" id="L142">        candidates.add(&quot;/opt/homebrew/bin/tesseract&quot;);</span>
+<span class="fc" id="L143">        candidates.add(&quot;tesseract&quot;);</span>
+<span class="fc bfc" id="L144" title="All 2 branches covered.">        for (String candidate : candidates) {</span>
+<span class="pc bpc" id="L145" title="1 of 4 branches missed.">            if (!candidate.equals(&quot;tesseract&quot;) &amp;&amp; !Files.isRegularFile(Path.of(candidate))) {</span>
+<span class="fc" id="L146">                continue;</span>
+            }
+<span class="pc bpc" id="L148" title="1 of 2 branches missed.">            if (runs(candidate)) {</span>
+<span class="nc" id="L149">                executable = candidate;</span>
+<span class="nc" id="L150">                log.info(&quot;Using Tesseract OCR at {}&quot;, candidate);</span>
+<span class="nc" id="L151">                return candidate;</span>
+            }
+        }
+<span class="fc" id="L154">        return null;</span>
+    }
+
+    private static boolean runs(String exe) {
+        try {
+<span class="nc" id="L159">            Process p = new ProcessBuilder(exe, &quot;--version&quot;).redirectErrorStream(true).start();</span>
+<span class="nc" id="L160">            p.getInputStream().transferTo(OutputStreamSink.INSTANCE);</span>
+<span class="nc bnc" id="L161" title="All 4 branches missed.">            return p.waitFor(10, TimeUnit.SECONDS) &amp;&amp; p.exitValue() == 0;</span>
+<span class="fc" id="L162">        } catch (IOException e) {</span>
+<span class="fc" id="L163">            return false;</span>
+<span class="nc" id="L164">        } catch (InterruptedException e) {</span>
+<span class="nc" id="L165">            Thread.currentThread().interrupt();</span>
+<span class="nc" id="L166">            return false;</span>
+        }
+    }
+
+    private static void deleteQuietly(Path dir) {
+<span class="nc bnc" id="L171" title="All 2 branches missed.">        if (dir == null) {</span>
+<span class="nc" id="L172">            return;</span>
+        }
+<span class="nc" id="L174">        try (var files = Files.walk(dir)) {</span>
+<span class="nc" id="L175">            files.sorted(java.util.Comparator.reverseOrder()).forEach(p -&gt; p.toFile().delete());</span>
+<span class="nc" id="L176">        } catch (IOException ignored) {</span>
+            // temp folder; the OS cleans it up eventually
+        }
+<span class="nc" id="L179">    }</span>
+
+    /** Discards a process stream. */
+    private static final class OutputStreamSink extends java.io.OutputStream {
+<span class="nc" id="L183">        static final OutputStreamSink INSTANCE = new OutputStreamSink();</span>
+
+        @Override
+        public void write(int b) {
+<span class="nc" id="L187">        }</span>
+
+        @Override
+        public void write(byte[] b, int off, int len) {
+<span class="nc" id="L191">        }</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.13.202504020838</span></div></body></html>

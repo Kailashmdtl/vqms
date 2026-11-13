@@ -1,0 +1,157 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>VendorGrader.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">SUTRA comparison service</a> &gt; <a href="index.source.html" class="el_package">com.sutra.comparison.service.internal</a> &gt; <span class="el_source">VendorGrader.java</span></div><h1>VendorGrader.java</h1><pre class="source lang-java linenums">package com.sutra.comparison.service.internal;
+
+import com.sutra.api.quotation.QuotationResponses.QuotationResponse;
+import com.sutra.api.comparison.GradeReport;
+import com.sutra.api.rules.TermsCheck;
+import com.sutra.api.comparison.GradeReport.GradeRule;
+import java.math.BigDecimal;
+import java.math.RoundingMode;
+import java.time.LocalDate;
+import java.time.temporal.ChronoUnit;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Locale;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+
+/**
+ * Grades a vendor's quotation for the comparison with fixed, visible rules. The grade is advice: it does not rank
+ * vendors for award, select a vendor or approve anything - an authorised approver decides.
+ *
+ * &lt;table&gt;
+ *   &lt;caption&gt;Rules (100 points)&lt;/caption&gt;
+ *   &lt;tr&gt;&lt;td&gt;PRICE&lt;/td&gt;&lt;td&gt;40&lt;/td&gt;&lt;td&gt;Lowest complete quotation 40; minus 2 points per 1% above it;
+ *       0 when not ranked (incomplete or another currency)&lt;/td&gt;&lt;/tr&gt;
+ *   &lt;tr&gt;&lt;td&gt;COVERAGE&lt;/td&gt;&lt;td&gt;15&lt;/td&gt;&lt;td&gt;Share of requested items quoted&lt;/td&gt;&lt;/tr&gt;
+ *   &lt;tr&gt;&lt;td&gt;DELIVERY&lt;/td&gt;&lt;td&gt;10&lt;/td&gt;&lt;td&gt;Up to 14 days 10, up to 30 days 8, longer or no days stated 6,
+ *       left open 4, missing 0&lt;/td&gt;&lt;/tr&gt;
+ *   &lt;tr&gt;&lt;td&gt;PAYMENT&lt;/td&gt;&lt;td&gt;10&lt;/td&gt;&lt;td&gt;Credit terms (no advance) 10, part advance 7, full advance 4,
+ *       left open 4, missing 0&lt;/td&gt;&lt;/tr&gt;
+ *   &lt;tr&gt;&lt;td&gt;WARRANTY&lt;/td&gt;&lt;td&gt;10&lt;/td&gt;&lt;td&gt;Stated for all items 10, partly unspecified 5, missing 0&lt;/td&gt;&lt;/tr&gt;
+ *   &lt;tr&gt;&lt;td&gt;VALIDITY&lt;/td&gt;&lt;td&gt;10&lt;/td&gt;&lt;td&gt;Valid 7+ more days 10, under 7 days 6, missing or expired 0&lt;/td&gt;&lt;/tr&gt;
+ *   &lt;tr&gt;&lt;td&gt;DATA_QUALITY&lt;/td&gt;&lt;td&gt;5&lt;/td&gt;&lt;td&gt;Minus 1 per open review flag&lt;/td&gt;&lt;/tr&gt;
+ * &lt;/table&gt;
+ */
+public final class VendorGrader {
+
+<span class="fc" id="L37">    private static final Pattern DAYS = Pattern.compile(&quot;(\\d{1,3})\\s*(?:calendar\\s+|working\\s+|business\\s+)?days?&quot;,</span>
+<span class="fc" id="L38">            Pattern.CASE_INSENSITIVE);</span>
+<span class="fc" id="L39">    private static final Pattern WEEKS = Pattern.compile(&quot;(\\d{1,2})\\s*weeks?&quot;, Pattern.CASE_INSENSITIVE);</span>
+<span class="fc" id="L40">    private static final Pattern ADVANCE_PERCENT = Pattern.compile(&quot;(\\d{1,3})\\s*%\\s*(?:advance|in\\s+advance|upfront)&quot;,</span>
+<span class="fc" id="L41">            Pattern.CASE_INSENSITIVE);</span>
+
+    private VendorGrader() {
+    }
+
+    /**
+     * @param differencePercent how far the quotation's comparable total is above the lowest, in % (null if unranked)
+     */
+    public static GradeReport grade(QuotationResponse q, Integer priceRank, BigDecimal differencePercent, int itemsQuoted,
+                                    int itemsRequested, LocalDate today) {
+<span class="fc" id="L51">        List&lt;GradeRule&gt; rules = new ArrayList&lt;&gt;();</span>
+
+<span class="fc bfc" id="L53" title="All 2 branches covered.">        if (priceRank == null) {</span>
+<span class="fc" id="L54">            rules.add(GradeReport.rule(&quot;PRICE&quot;, &quot;Price&quot;, 40, 0,</span>
+<span class="fc" id="L55">                    &quot;Not ranked: not every requested item is priced in the request currency&quot;));</span>
+<span class="fc" id="L56">        } else {</span>
+<span class="pc bpc" id="L57" title="1 of 2 branches missed.">            double diff = differencePercent == null ? 0 : differencePercent.doubleValue();</span>
+<span class="fc" id="L58">            rules.add(GradeReport.rule(&quot;PRICE&quot;, &quot;Price&quot;, 40, (40 - 2 * diff) / 40,</span>
+<span class="fc bfc" id="L59" title="All 2 branches covered.">                    priceRank == 1 ? &quot;Lowest complete quotation&quot; : &quot;Rank &quot; + priceRank + &quot;, &quot; + percent(diff) + &quot; above lowest&quot;));</span>
+        }
+
+<span class="fc" id="L62">        rules.add(GradeReport.rule(&quot;COVERAGE&quot;, &quot;Requested items quoted&quot;, 15,</span>
+<span class="pc bpc" id="L63" title="1 of 2 branches missed.">                itemsRequested == 0 ? 0 : (double) itemsQuoted / itemsRequested, itemsQuoted + &quot; of &quot; + itemsRequested));</span>
+
+<span class="fc" id="L65">        rules.add(delivery(q.deliveryTerms()));</span>
+<span class="fc" id="L66">        rules.add(payment(q.paymentTerms()));</span>
+<span class="fc" id="L67">        rules.add(warranty(q.warrantyTerms()));</span>
+<span class="fc" id="L68">        rules.add(validity(q.validUntil(), today));</span>
+
+<span class="fc" id="L70">        long open = ComparisonEngine.openFlags(q);</span>
+<span class="fc" id="L71">        rules.add(GradeReport.rule(&quot;DATA_QUALITY&quot;, &quot;Open review flags&quot;, 5, (5 - open) / 5.0,</span>
+<span class="fc bfc" id="L72" title="All 2 branches covered.">                open == 0 ? &quot;None&quot; : open + &quot; open&quot;));</span>
+<span class="fc" id="L73">        return GradeReport.of(rules);</span>
+    }
+
+    static GradeRule delivery(String terms) {
+<span class="fc bfc" id="L77" title="All 2 branches covered.">        if (blank(terms)) {</span>
+<span class="fc" id="L78">            return GradeReport.rule(&quot;DELIVERY&quot;, &quot;Delivery&quot;, 10, 0, &quot;Not stated&quot;);</span>
+        }
+<span class="fc bfc" id="L80" title="All 2 branches covered.">        if (TermsCheck.incomplete(terms).isPresent()) {</span>
+<span class="fc" id="L81">            return GradeReport.rule(&quot;DELIVERY&quot;, &quot;Delivery&quot;, 10, 0.4, &quot;Left open: &quot; + TermsCheck.incomplete(terms).get());</span>
+        }
+<span class="fc" id="L83">        Integer days = days(terms);</span>
+<span class="fc bfc" id="L84" title="All 2 branches covered.">        if (days == null) {</span>
+<span class="fc" id="L85">            return GradeReport.rule(&quot;DELIVERY&quot;, &quot;Delivery&quot;, 10, 0.6, &quot;No delivery time in days&quot;);</span>
+        }
+<span class="fc bfc" id="L87" title="All 4 branches covered.">        double fraction = days &lt;= 14 ? 1 : days &lt;= 30 ? 0.8 : 0.6;</span>
+<span class="fc" id="L88">        return GradeReport.rule(&quot;DELIVERY&quot;, &quot;Delivery&quot;, 10, fraction, days + &quot; days&quot;);</span>
+    }
+
+    static GradeRule payment(String terms) {
+<span class="fc bfc" id="L92" title="All 2 branches covered.">        if (blank(terms)) {</span>
+<span class="fc" id="L93">            return GradeReport.rule(&quot;PAYMENT&quot;, &quot;Payment&quot;, 10, 0, &quot;Not stated&quot;);</span>
+        }
+<span class="pc bpc" id="L95" title="1 of 2 branches missed.">        if (TermsCheck.incomplete(terms).isPresent()) {</span>
+<span class="nc" id="L96">            return GradeReport.rule(&quot;PAYMENT&quot;, &quot;Payment&quot;, 10, 0.4, &quot;Left open: &quot; + TermsCheck.incomplete(terms).get());</span>
+        }
+<span class="fc" id="L98">        String lower = terms.toLowerCase(Locale.ROOT);</span>
+<span class="fc" id="L99">        Matcher m = ADVANCE_PERCENT.matcher(terms);</span>
+<span class="fc bfc" id="L100" title="All 2 branches covered.">        if (m.find()) {</span>
+<span class="fc" id="L101">            int pct = Integer.parseInt(m.group(1));</span>
+<span class="fc bfc" id="L102" title="All 2 branches covered.">            return pct &gt;= 100</span>
+<span class="fc" id="L103">                    ? GradeReport.rule(&quot;PAYMENT&quot;, &quot;Payment&quot;, 10, 0.4, &quot;Full payment in advance&quot;)</span>
+<span class="fc" id="L104">                    : GradeReport.rule(&quot;PAYMENT&quot;, &quot;Payment&quot;, 10, 0.7, pct + &quot;% advance&quot;);</span>
+        }
+<span class="pc bpc" id="L106" title="1 of 4 branches missed.">        if (lower.contains(&quot;advance&quot;) || lower.contains(&quot;upfront&quot;)) {</span>
+<span class="pc bpc" id="L107" title="2 of 4 branches missed.">            boolean full = lower.contains(&quot;100%&quot;) || lower.contains(&quot;full&quot;);</span>
+<span class="pc bpc" id="L108" title="2 of 4 branches missed.">            return GradeReport.rule(&quot;PAYMENT&quot;, &quot;Payment&quot;, 10, full ? 0.4 : 0.7, full ? &quot;Full advance&quot; : &quot;Part advance&quot;);</span>
+        }
+<span class="fc" id="L110">        return GradeReport.rule(&quot;PAYMENT&quot;, &quot;Payment&quot;, 10, 1, &quot;No advance&quot;);</span>
+    }
+
+    static GradeRule warranty(String terms) {
+<span class="fc bfc" id="L114" title="All 2 branches covered.">        if (blank(terms)) {</span>
+<span class="fc" id="L115">            return GradeReport.rule(&quot;WARRANTY&quot;, &quot;Warranty&quot;, 10, 0, &quot;Not stated&quot;);</span>
+        }
+<span class="fc" id="L117">        return TermsCheck.incomplete(terms)</span>
+<span class="fc" id="L118">                .map(s -&gt; GradeReport.rule(&quot;WARRANTY&quot;, &quot;Warranty&quot;, 10, 0.5, &quot;Partly unspecified: &quot; + s))</span>
+<span class="fc" id="L119">                .orElseGet(() -&gt; GradeReport.rule(&quot;WARRANTY&quot;, &quot;Warranty&quot;, 10, 1, &quot;Stated&quot;));</span>
+    }
+
+    static GradeRule validity(LocalDate validUntil, LocalDate today) {
+<span class="fc bfc" id="L123" title="All 2 branches covered.">        if (validUntil == null) {</span>
+<span class="fc" id="L124">            return GradeReport.rule(&quot;VALIDITY&quot;, &quot;Validity&quot;, 10, 0, &quot;No validity date&quot;);</span>
+        }
+<span class="fc" id="L126">        long left = ChronoUnit.DAYS.between(today, validUntil);</span>
+<span class="fc bfc" id="L127" title="All 2 branches covered.">        if (left &lt; 0) {</span>
+<span class="fc" id="L128">            return GradeReport.rule(&quot;VALIDITY&quot;, &quot;Validity&quot;, 10, 0, &quot;Expired on &quot; + validUntil);</span>
+        }
+<span class="fc bfc" id="L130" title="All 2 branches covered.">        return GradeReport.rule(&quot;VALIDITY&quot;, &quot;Validity&quot;, 10, left &gt;= 7 ? 1 : 0.6, left + &quot; day(s) left&quot;);</span>
+    }
+
+    /** Delivery time in days from text such as &quot;within 12 calendar days&quot; or &quot;2-3 weeks&quot; (the longest figure). */
+    static Integer days(String terms) {
+<span class="fc" id="L135">        Integer best = null;</span>
+<span class="fc" id="L136">        Matcher d = DAYS.matcher(terms);</span>
+<span class="fc bfc" id="L137" title="All 2 branches covered.">        while (d.find()) {</span>
+<span class="fc" id="L138">            int v = Integer.parseInt(d.group(1));</span>
+<span class="pc bpc" id="L139" title="1 of 2 branches missed.">            best = best == null ? v : Math.max(best, v);</span>
+        }
+<span class="fc" id="L141">        Matcher w = WEEKS.matcher(terms);</span>
+<span class="fc bfc" id="L142" title="All 2 branches covered.">        while (w.find()) {</span>
+<span class="fc" id="L143">            int v = Integer.parseInt(w.group(1)) * 7;</span>
+<span class="fc bfc" id="L144" title="All 2 branches covered.">            best = best == null ? v : Math.max(best, v);</span>
+        }
+<span class="fc" id="L146">        return best;</span>
+    }
+
+    private static boolean blank(String s) {
+<span class="fc bfc" id="L150" title="All 4 branches covered.">        return s == null || s.isBlank();</span>
+    }
+
+    private static String percent(double value) {
+<span class="fc" id="L154">        return BigDecimal.valueOf(value).setScale(2, RoundingMode.HALF_UP).stripTrailingZeros().toPlainString() + &quot;%&quot;;</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.13.202504020838</span></div></body></html>

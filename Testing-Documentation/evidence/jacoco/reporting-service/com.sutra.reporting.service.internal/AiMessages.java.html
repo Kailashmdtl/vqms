@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>AiMessages.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">SUTRA reporting service</a> &gt; <a href="index.source.html" class="el_package">com.sutra.reporting.service.internal</a> &gt; <span class="el_source">AiMessages.java</span></div><h1>AiMessages.java</h1><pre class="source lang-java linenums">package com.sutra.reporting.service.internal;
+
+import java.util.LinkedHashMap;
+import java.util.Map;
+
+/** Builds the chat messages and the strict JSON-schema response format sent to the AI through the extraction service. */
+public final class AiMessages {
+
+    private AiMessages() {
+    }
+
+    public static Map&lt;String, Object&gt; message(String role, String content) {
+<span class="fc" id="L13">        Map&lt;String, Object&gt; m = new LinkedHashMap&lt;&gt;();</span>
+<span class="fc" id="L14">        m.put(&quot;role&quot;, role);</span>
+<span class="fc" id="L15">        m.put(&quot;content&quot;, content);</span>
+<span class="fc" id="L16">        return m;</span>
+    }
+
+    public static Map&lt;String, Object&gt; jsonSchema(String name, Map&lt;String, Object&gt; schema) {
+<span class="fc" id="L20">        Map&lt;String, Object&gt; jsonSchema = new LinkedHashMap&lt;&gt;();</span>
+<span class="fc" id="L21">        jsonSchema.put(&quot;name&quot;, name);</span>
+<span class="fc" id="L22">        jsonSchema.put(&quot;strict&quot;, true);</span>
+<span class="fc" id="L23">        jsonSchema.put(&quot;schema&quot;, schema);</span>
+<span class="fc" id="L24">        Map&lt;String, Object&gt; format = new LinkedHashMap&lt;&gt;();</span>
+<span class="fc" id="L25">        format.put(&quot;type&quot;, &quot;json_schema&quot;);</span>
+<span class="fc" id="L26">        format.put(&quot;json_schema&quot;, jsonSchema);</span>
+<span class="fc" id="L27">        return format;</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.13.202504020838</span></div></body></html>

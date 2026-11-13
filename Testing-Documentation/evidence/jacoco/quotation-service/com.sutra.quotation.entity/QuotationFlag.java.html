@@ -1,0 +1,83 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>QuotationFlag.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">SUTRA quotation service</a> &gt; <a href="index.source.html" class="el_package">com.sutra.quotation.entity</a> &gt; <span class="el_source">QuotationFlag.java</span></div><h1>QuotationFlag.java</h1><pre class="source lang-java linenums">package com.sutra.quotation.entity;
+
+import com.sutra.quotation.entity.base.BaseEntity;
+import com.sutra.api.enums.FlagSeverity;
+import jakarta.persistence.Column;
+import jakarta.persistence.Embedded;
+import jakarta.persistence.AttributeOverride;
+import jakarta.persistence.Entity;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
+import jakarta.persistence.FetchType;
+import jakarta.persistence.JoinColumn;
+import jakarta.persistence.ManyToOne;
+import jakarta.persistence.PrePersist;
+import jakarta.persistence.Table;
+import java.time.Instant;
+import lombok.Getter;
+import lombok.NoArgsConstructor;
+import lombok.Setter;
+
+/** An uncertain, conflicting or missing value that needs human review. */
+@Entity
+@Table(name = &quot;quotation_flag&quot;)
+@Getter
+@Setter
+@NoArgsConstructor
+public class QuotationFlag extends BaseEntity {
+
+    @ManyToOne(fetch = FetchType.LAZY, optional = false)
+    @JoinColumn(name = &quot;quotation_id&quot;, nullable = false)
+    private Quotation quotation;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = &quot;quotation_item_id&quot;)
+    private QuotationItem quotationItem;
+
+    @Column(name = &quot;field_name&quot;, nullable = false, length = 60)
+    private String fieldName;
+
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false, length = 10)
+    private FlagSeverity severity;
+
+    @Column(nullable = false, length = 40)
+    private String code;
+
+    @Column(nullable = false, length = 500)
+    private String message;
+
+    @Column(nullable = false)
+    private boolean resolved;
+
+    @Embedded
+    @AttributeOverride(name = &quot;id&quot;, column = @Column(name = &quot;resolved_by_id&quot;))
+    @AttributeOverride(name = &quot;username&quot;, column = @Column(name = &quot;resolved_by_name&quot;))
+    private UserRef resolvedBy;
+
+    @Column(name = &quot;resolved_at&quot;)
+    private Instant resolvedAt;
+
+    @Column(name = &quot;created_at&quot;, nullable = false, updatable = false)
+    private Instant createdAt;
+
+<span class="fc" id="L64">    public QuotationFlag(QuotationItem item, String fieldName, FlagSeverity severity, String code, String message) {</span>
+<span class="fc" id="L65">        this.quotationItem = item;</span>
+<span class="fc" id="L66">        this.fieldName = fieldName;</span>
+<span class="fc" id="L67">        this.severity = severity;</span>
+<span class="fc" id="L68">        this.code = code;</span>
+<span class="pc bpc" id="L69" title="1 of 2 branches missed.">        this.message = message.length() &gt; 500 ? message.substring(0, 497) + &quot;...&quot; : message;</span>
+<span class="fc" id="L70">    }</span>
+
+    @PrePersist
+    void onCreate() {
+<span class="nc" id="L74">        createdAt = Instant.now();</span>
+<span class="nc" id="L75">    }</span>
+
+    public void resolve(UserRef user) {
+<span class="fc" id="L78">        resolved = true;</span>
+<span class="fc" id="L79">        resolvedBy = user;</span>
+<span class="fc" id="L80">        resolvedAt = Instant.now();</span>
+<span class="fc" id="L81">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.13.202504020838</span></div></body></html>

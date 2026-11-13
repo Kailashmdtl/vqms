@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>MasterDataResponses.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">SUTRA master data service</a> &gt; <a href="index.source.html" class="el_package">com.sutra.masterdata.dto.response</a> &gt; <span class="el_source">MasterDataResponses.java</span></div><h1>MasterDataResponses.java</h1><pre class="source lang-java linenums"><span class="fc" id="L1">package com.sutra.masterdata.dto.response;</span>
+
+import com.sutra.masterdata.entity.BusinessEntity;
+import com.sutra.masterdata.entity.Customer;
+import com.sutra.masterdata.entity.SubEntity;
+import com.sutra.masterdata.entity.Vendor;
+import java.time.Instant;
+import java.util.List;
+
+public final class MasterDataResponses {
+
+    private MasterDataResponses() {
+    }
+
+    public record SubEntityResponse(Long id, Long entityId, String entityName, String code, String name,
+                                    String description, boolean active, Instant createdAt, Instant updatedAt) {
+        public static SubEntityResponse from(SubEntity s) {
+<span class="fc" id="L18">            return new SubEntityResponse(s.getId(), s.getEntity().getId(), s.getEntity().getName(), s.getCode(),</span>
+<span class="fc" id="L19">                    s.getName(), s.getDescription(), s.isActive(), s.getCreatedAt(), s.getUpdatedAt());</span>
+        }
+    }
+
+    public record EntityResponse(Long id, String code, String name, String description, String address,
+                                 boolean active, List&lt;SubEntityResponse&gt; subEntities,
+                                 Instant createdAt, Instant updatedAt) {
+        public static EntityResponse from(BusinessEntity e) {
+<span class="fc" id="L27">            return new EntityResponse(e.getId(), e.getCode(), e.getName(), e.getDescription(), e.getAddress(),</span>
+<span class="fc" id="L28">                    e.isActive(), e.getSubEntities().stream().map(SubEntityResponse::from).toList(),</span>
+<span class="fc" id="L29">                    e.getCreatedAt(), e.getUpdatedAt());</span>
+        }
+    }
+
+    public record CustomerResponse(Long id, String code, String name, Long entityId, String entityName,
+                                   String contactPerson, String email, String phone, String address,
+                                   boolean active, Instant createdAt, Instant updatedAt) {
+        public static CustomerResponse from(Customer c) {
+<span class="fc" id="L37">            return new CustomerResponse(c.getId(), c.getCode(), c.getName(),</span>
+<span class="pc bpc" id="L38" title="1 of 2 branches missed.">                    c.getEntity() == null ? null : c.getEntity().getId(),</span>
+<span class="pc bpc" id="L39" title="1 of 2 branches missed.">                    c.getEntity() == null ? null : c.getEntity().getName(),</span>
+<span class="fc" id="L40">                    c.getContactPerson(), c.getEmail(), c.getPhone(), c.getAddress(), c.isActive(),</span>
+<span class="fc" id="L41">                    c.getCreatedAt(), c.getUpdatedAt());</span>
+        }
+    }
+
+    public record VendorResponse(Long id, String code, String name, String contactPerson, String email,
+                                 String phone, String address, String taxNumber, String website,
+                                 boolean active, Instant createdAt, Instant updatedAt) {
+        public static VendorResponse from(Vendor v) {
+<span class="fc" id="L49">            return new VendorResponse(v.getId(), v.getCode(), v.getName(), v.getContactPerson(), v.getEmail(),</span>
+<span class="fc" id="L50">                    v.getPhone(), v.getAddress(), v.getTaxNumber(), v.getWebsite(), v.isActive(),</span>
+<span class="fc" id="L51">                    v.getCreatedAt(), v.getUpdatedAt());</span>
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.13.202504020838</span></div></body></html>

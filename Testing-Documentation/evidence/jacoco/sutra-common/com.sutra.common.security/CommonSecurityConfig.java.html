@@ -1,0 +1,71 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>CommonSecurityConfig.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">SUTRA common</a> &gt; <a href="index.source.html" class="el_package">com.sutra.common.security</a> &gt; <span class="el_source">CommonSecurityConfig.java</span></div><h1>CommonSecurityConfig.java</h1><pre class="source lang-java linenums"><span class="nc" id="L1">package com.sutra.common.security;</span>
+
+import com.sutra.common.error.ApiError;
+import com.sutra.common.web.CorrelationIdFilter;
+import jakarta.servlet.http.HttpServletResponse;
+import java.io.IOException;
+import java.time.Instant;
+import org.springframework.boot.context.properties.EnableConfigurationProperties;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.http.MediaType;
+import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
+import org.springframework.security.config.annotation.web.builders.HttpSecurity;
+import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
+import org.springframework.security.config.http.SessionCreationPolicy;
+import org.springframework.security.web.SecurityFilterChain;
+import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
+import tools.jackson.databind.ObjectMapper;
+
+/**
+ * Stateless JWT security shared by every service. {@code /internal/**} is only for other SUTRA services (the
+ * gateway never forwards it); {@code /api/**} needs a signed-in user; fine-grained rules are {@code @PreAuthorize}
+ * annotations on the controllers. CORS is handled once, at the gateway.
+ */
+@Configuration
+@EnableMethodSecurity
+@EnableConfigurationProperties(SecurityProperties.class)
+<span class="nc" id="L28">public class CommonSecurityConfig {</span>
+
+    @Bean
+    JwtCodec jwtCodec(SecurityProperties properties) {
+<span class="nc" id="L32">        return new JwtCodec(properties);</span>
+    }
+
+    @Bean
+    SecurityFilterChain filterChain(HttpSecurity http, JwtCodec jwt, SecurityProperties properties,
+                                    ObjectMapper objectMapper) throws Exception {
+<span class="nc" id="L38">        String[] publicPaths = properties.publicPaths().toArray(String[]::new);</span>
+<span class="nc" id="L39">        http</span>
+<span class="nc" id="L40">                .csrf(AbstractHttpConfigurer::disable)</span>
+<span class="nc" id="L41">                .sessionManagement(s -&gt; s.sessionCreationPolicy(SessionCreationPolicy.STATELESS))</span>
+<span class="nc" id="L42">                .authorizeHttpRequests(auth -&gt; {</span>
+<span class="nc bnc" id="L43" title="All 2 branches missed.">                    if (publicPaths.length &gt; 0) {</span>
+<span class="nc" id="L44">                        auth.requestMatchers(publicPaths).permitAll();</span>
+                    }
+<span class="nc" id="L46">                    auth.requestMatchers(&quot;/actuator/health&quot;, &quot;/v3/api-docs/**&quot;, &quot;/swagger-ui/**&quot;, &quot;/swagger-ui.html&quot;)</span>
+<span class="nc" id="L47">                            .permitAll()</span>
+<span class="nc" id="L48">                            .requestMatchers(&quot;/internal/**&quot;).hasRole(RoleName.SERVICE.name())</span>
+<span class="nc" id="L49">                            .requestMatchers(&quot;/api/**&quot;).authenticated()</span>
+<span class="nc" id="L50">                            .anyRequest().denyAll();</span>
+<span class="nc" id="L51">                })</span>
+<span class="nc" id="L52">                .exceptionHandling(e -&gt; e</span>
+<span class="nc" id="L53">                        .authenticationEntryPoint((req, res, ex) -&gt;</span>
+<span class="nc" id="L54">                                writeError(objectMapper, res, 401, &quot;Unauthorized&quot;, &quot;UNAUTHENTICATED&quot;,</span>
+<span class="nc" id="L55">                                        &quot;Authentication is required&quot;, req.getRequestURI()))</span>
+<span class="nc" id="L56">                        .accessDeniedHandler((req, res, ex) -&gt;</span>
+<span class="nc" id="L57">                                writeError(objectMapper, res, 403, &quot;Forbidden&quot;, &quot;FORBIDDEN&quot;,</span>
+<span class="nc" id="L58">                                        &quot;You do not have permission to perform this action&quot;, req.getRequestURI())))</span>
+<span class="nc" id="L59">                .addFilterBefore(new JwtAuthenticationFilter(jwt), UsernamePasswordAuthenticationFilter.class);</span>
+<span class="nc" id="L60">        return http.build();</span>
+    }
+
+    private static void writeError(ObjectMapper mapper, HttpServletResponse res, int status, String error,
+                                   String code, String message, String path) throws IOException {
+<span class="nc" id="L65">        res.setStatus(status);</span>
+<span class="nc" id="L66">        res.setContentType(MediaType.APPLICATION_JSON_VALUE);</span>
+<span class="nc" id="L67">        mapper.writeValue(res.getOutputStream(), new ApiError(Instant.now(), status, error, code, message, path, null,</span>
+<span class="nc" id="L68">                CorrelationIdFilter.current()));</span>
+<span class="nc" id="L69">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.13.202504020838</span></div></body></html>

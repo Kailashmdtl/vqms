@@ -1,0 +1,129 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>ProxyController.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">SUTRA API gateway</a> &gt; <a href="index.source.html" class="el_package">com.sutra.gateway</a> &gt; <span class="el_source">ProxyController.java</span></div><h1>ProxyController.java</h1><pre class="source lang-java linenums">package com.sutra.gateway;
+
+import com.sutra.common.error.ApiError;
+import com.sutra.common.web.CorrelationIdFilter;
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.time.Duration;
+import java.time.Instant;
+import java.util.Collections;
+import java.util.Locale;
+import java.util.Set;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.http.MediaType;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RestController;
+import tools.jackson.databind.ObjectMapper;
+
+/**
+ * Forwards every {@code /api/**} request to the service that owns it and streams the answer back unchanged.
+ * Request and response bodies are streamed, so large uploads and downloads are never held in memory here.
+ */
+@RestController
+public class ProxyController {
+
+<span class="nc" id="L33">    private static final Logger log = LoggerFactory.getLogger(ProxyController.class);</span>
+
+    /** Hop-by-hop headers, and those the HTTP client sets itself. */
+<span class="nc" id="L36">    private static final Set&lt;String&gt; SKIP_REQUEST = Set.of(&quot;connection&quot;, &quot;keep-alive&quot;, &quot;transfer-encoding&quot;, &quot;te&quot;,</span>
+<span class="nc" id="L37">            &quot;trailer&quot;, &quot;upgrade&quot;, &quot;host&quot;, &quot;content-length&quot;, &quot;expect&quot;, &quot;proxy-connection&quot;, &quot;origin&quot;);</span>
+<span class="nc" id="L38">    private static final Set&lt;String&gt; SKIP_RESPONSE = Set.of(&quot;connection&quot;, &quot;keep-alive&quot;, &quot;transfer-encoding&quot;, &quot;te&quot;,</span>
+<span class="nc" id="L39">            &quot;trailer&quot;, &quot;upgrade&quot;, &quot;content-length&quot;);</span>
+    /** Each service answers CORS through the gateway's own handling; their headers would be duplicates. */
+<span class="nc" id="L41">    private static final String ACCESS_CONTROL = &quot;access-control-&quot;;</span>
+
+    private final RouteTable routes;
+    private final GatewayProperties properties;
+    private final ObjectMapper objectMapper;
+<span class="nc" id="L46">    private final HttpClient http = HttpClient.newBuilder()</span>
+<span class="nc" id="L47">            .connectTimeout(Duration.ofSeconds(5))</span>
+<span class="nc" id="L48">            .version(HttpClient.Version.HTTP_1_1)</span>
+<span class="nc" id="L49">            .build();</span>
+
+<span class="nc" id="L51">    public ProxyController(RouteTable routes, GatewayProperties properties, ObjectMapper objectMapper) {</span>
+<span class="nc" id="L52">        this.routes = routes;</span>
+<span class="nc" id="L53">        this.properties = properties;</span>
+<span class="nc" id="L54">        this.objectMapper = objectMapper;</span>
+<span class="nc" id="L55">    }</span>
+
+    @RequestMapping(&quot;/api/**&quot;)
+    public void proxy(HttpServletRequest request, HttpServletResponse response) throws IOException {
+<span class="nc" id="L59">        String path = request.getRequestURI();</span>
+<span class="nc" id="L60">        var route = routes.find(path);</span>
+<span class="nc bnc" id="L61" title="All 2 branches missed.">        if (route.isEmpty()) {</span>
+<span class="nc" id="L62">            error(response, path, 404, &quot;Not Found&quot;, &quot;NOT_FOUND&quot;, &quot;No endpoint at this path&quot;);</span>
+<span class="nc" id="L63">            return;</span>
+        }
+<span class="nc" id="L65">        String query = request.getQueryString();</span>
+<span class="nc bnc" id="L66" title="All 2 branches missed.">        URI target = URI.create(route.get().url() + path + (query == null ? &quot;&quot; : &quot;?&quot; + query));</span>
+
+<span class="nc" id="L68">        HttpRequest.Builder out = HttpRequest.newBuilder(target)</span>
+<span class="nc" id="L69">                .timeout(Duration.ofSeconds(properties.requestTimeoutSeconds()));</span>
+<span class="nc bnc" id="L70" title="All 2 branches missed.">        for (String name : Collections.list(request.getHeaderNames())) {</span>
+<span class="nc bnc" id="L71" title="All 2 branches missed.">            if (!SKIP_REQUEST.contains(name.toLowerCase(Locale.ROOT))) {</span>
+<span class="nc bnc" id="L72" title="All 2 branches missed.">                for (String value : Collections.list(request.getHeaders(name))) {</span>
+<span class="nc" id="L73">                    out.header(name, value);</span>
+                }
+            }
+        }
+<span class="nc" id="L77">        String correlationId = CorrelationIdFilter.current();</span>
+<span class="nc bnc" id="L78" title="All 2 branches missed.">        if (correlationId != null) {</span>
+<span class="nc" id="L79">            out.setHeader(CorrelationIdFilter.HEADER, correlationId);</span>
+        }
+<span class="nc" id="L81">        out.header(&quot;X-Forwarded-For&quot;, request.getRemoteAddr());</span>
+<span class="nc bnc" id="L82" title="All 4 branches missed.">        boolean hasBody = request.getContentLengthLong() &gt; 0 || request.getHeader(&quot;Transfer-Encoding&quot;) != null;</span>
+<span class="nc bnc" id="L83" title="All 2 branches missed.">        out.method(request.getMethod(), hasBody</span>
+<span class="nc" id="L84">                ? HttpRequest.BodyPublishers.ofInputStream(() -&gt; {</span>
+                    try {
+<span class="nc" id="L86">                        return request.getInputStream();</span>
+<span class="nc" id="L87">                    } catch (IOException e) {</span>
+<span class="nc" id="L88">                        throw new IllegalStateException(e);</span>
+                    }
+<span class="nc" id="L90">                })</span>
+<span class="nc" id="L91">                : HttpRequest.BodyPublishers.noBody());</span>
+
+        HttpResponse&lt;InputStream&gt; answer;
+        try {
+<span class="nc" id="L95">            answer = http.send(out.build(), HttpResponse.BodyHandlers.ofInputStream());</span>
+<span class="nc" id="L96">        } catch (InterruptedException e) {</span>
+<span class="nc" id="L97">            Thread.currentThread().interrupt();</span>
+<span class="nc" id="L98">            error(response, path, 503, &quot;Service Unavailable&quot;, &quot;SERVICE_UNAVAILABLE&quot;, &quot;The request was interrupted&quot;);</span>
+<span class="nc" id="L99">            return;</span>
+<span class="nc" id="L100">        } catch (IOException e) {</span>
+<span class="nc" id="L101">            log.warn(&quot;{} unreachable for {} {}: {}&quot;, route.get().service(), request.getMethod(), path, e.toString());</span>
+<span class="nc" id="L102">            error(response, path, 503, &quot;Service Unavailable&quot;, &quot;SERVICE_UNAVAILABLE&quot;,</span>
+<span class="nc" id="L103">                    &quot;The &quot; + route.get().service() + &quot; is not available right now. Try again in a moment.&quot;);</span>
+<span class="nc" id="L104">            return;</span>
+        }
+
+<span class="nc" id="L107">        response.setStatus(answer.statusCode());</span>
+<span class="nc" id="L108">        answer.headers().map().forEach((name, values) -&gt; {</span>
+<span class="nc" id="L109">            String lower = name.toLowerCase(Locale.ROOT);</span>
+<span class="nc bnc" id="L110" title="All 6 branches missed.">            if (!SKIP_RESPONSE.contains(lower) &amp;&amp; !lower.startsWith(ACCESS_CONTROL) &amp;&amp; !lower.equals(&quot;:status&quot;)</span>
+<span class="nc bnc" id="L111" title="All 2 branches missed.">                    &amp;&amp; !lower.equalsIgnoreCase(CorrelationIdFilter.HEADER)) {</span>
+<span class="nc" id="L112">                values.forEach(v -&gt; response.addHeader(name, v));</span>
+            }
+<span class="nc" id="L114">        });</span>
+<span class="nc" id="L115">        answer.headers().firstValueAsLong(&quot;content-length&quot;).ifPresent(response::setContentLengthLong);</span>
+<span class="nc" id="L116">        try (InputStream body = answer.body(); OutputStream sink = response.getOutputStream()) {</span>
+<span class="nc" id="L117">            body.transferTo(sink);</span>
+        }
+<span class="nc" id="L119">    }</span>
+
+    private void error(HttpServletResponse response, String path, int status, String error, String code,
+                       String message) throws IOException {
+<span class="nc" id="L123">        response.setStatus(status);</span>
+<span class="nc" id="L124">        response.setContentType(MediaType.APPLICATION_JSON_VALUE);</span>
+<span class="nc" id="L125">        objectMapper.writeValue(response.getOutputStream(),</span>
+<span class="nc" id="L126">                new ApiError(Instant.now(), status, error, code, message, path, null, CorrelationIdFilter.current()));</span>
+<span class="nc" id="L127">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.13.202504020838</span></div></body></html>

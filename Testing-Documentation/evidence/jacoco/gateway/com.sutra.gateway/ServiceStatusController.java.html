@@ -1,0 +1,73 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>ServiceStatusController.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">SUTRA API gateway</a> &gt; <a href="index.source.html" class="el_package">com.sutra.gateway</a> &gt; <span class="el_source">ServiceStatusController.java</span></div><h1>ServiceStatusController.java</h1><pre class="source lang-java linenums"><span class="nc" id="L1">package com.sutra.gateway;</span>
+
+import com.sutra.common.error.ApiError;
+import com.sutra.common.web.CorrelationIdFilter;
+import jakarta.servlet.http.HttpServletRequest;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.time.Duration;
+import java.time.Instant;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.CompletableFuture;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.RestController;
+
+/** Which SUTRA services are up, for the dashboard. Needs a signed-in user (checked by {@link GatewayFilter}). */
+@RestController
+public class ServiceStatusController {
+
+    public record ServiceStatus(String service, String url, boolean up, long responseMs) {
+    }
+
+    private final GatewayProperties properties;
+    private final String documentServiceUrl;
+<span class="nc" id="L32">    private final HttpClient http = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(2)).build();</span>
+
+<span class="nc" id="L34">    public ServiceStatusController(GatewayProperties properties,</span>
+                                   @Value(&quot;${sutra.gateway.document-service-url:http://localhost:8000}&quot;) String documentServiceUrl) {
+<span class="nc" id="L36">        this.properties = properties;</span>
+<span class="nc" id="L37">        this.documentServiceUrl = documentServiceUrl;</span>
+<span class="nc" id="L38">    }</span>
+
+    @GetMapping(&quot;/api/system/services&quot;)
+    public ResponseEntity&lt;?&gt; services(HttpServletRequest request) {
+<span class="nc bnc" id="L42" title="All 2 branches missed.">        if (request.getHeader(HttpHeaders.AUTHORIZATION) == null) {</span>
+<span class="nc" id="L43">            return ResponseEntity.status(401).body(new ApiError(Instant.now(), 401, &quot;Unauthorized&quot;, &quot;UNAUTHENTICATED&quot;,</span>
+<span class="nc" id="L44">                    &quot;Authentication is required&quot;, request.getRequestURI(), null, CorrelationIdFilter.current()));</span>
+        }
+<span class="nc" id="L46">        Map&lt;String, String&gt; targets = new LinkedHashMap&lt;&gt;();</span>
+<span class="nc" id="L47">        targets.put(&quot;gateway&quot;, null);</span>
+<span class="nc" id="L48">        properties.routes().forEach(r -&gt; targets.putIfAbsent(r.service(), r.url()));</span>
+<span class="nc" id="L49">        targets.put(&quot;document-service&quot;, documentServiceUrl);</span>
+
+<span class="nc" id="L51">        List&lt;CompletableFuture&lt;ServiceStatus&gt;&gt; checks = new ArrayList&lt;&gt;();</span>
+<span class="nc bnc" id="L52" title="All 2 branches missed.">        targets.forEach((name, url) -&gt; checks.add(url == null</span>
+<span class="nc" id="L53">                ? CompletableFuture.completedFuture(new ServiceStatus(name, &quot;(this)&quot;, true, 0))</span>
+<span class="nc" id="L54">                : CompletableFuture.supplyAsync(() -&gt; check(name, url))));</span>
+<span class="nc" id="L55">        return ResponseEntity.ok(checks.stream().map(CompletableFuture::join).toList());</span>
+    }
+
+    private ServiceStatus check(String name, String url) {
+<span class="nc bnc" id="L59" title="All 2 branches missed.">        String health = name.equals(&quot;document-service&quot;) ? url + &quot;/health&quot; : url + &quot;/actuator/health&quot;;</span>
+<span class="nc" id="L60">        long start = System.nanoTime();</span>
+        try {
+<span class="nc" id="L62">            HttpResponse&lt;Void&gt; response = http.send(HttpRequest.newBuilder(URI.create(health))</span>
+<span class="nc" id="L63">                    .timeout(Duration.ofSeconds(3)).GET().build(), HttpResponse.BodyHandlers.discarding());</span>
+<span class="nc bnc" id="L64" title="All 2 branches missed.">            return new ServiceStatus(name, url, response.statusCode() == 200, (System.nanoTime() - start) / 1_000_000);</span>
+<span class="nc" id="L65">        } catch (Exception e) {</span>
+<span class="nc bnc" id="L66" title="All 2 branches missed.">            if (e instanceof InterruptedException) {</span>
+<span class="nc" id="L67">                Thread.currentThread().interrupt();</span>
+            }
+<span class="nc" id="L69">            return new ServiceStatus(name, url, false, (System.nanoTime() - start) / 1_000_000);</span>
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.13.202504020838</span></div></body></html>

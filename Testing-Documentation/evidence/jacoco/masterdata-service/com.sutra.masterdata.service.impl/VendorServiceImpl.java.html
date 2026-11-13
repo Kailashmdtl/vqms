@@ -1,0 +1,150 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>VendorServiceImpl.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">SUTRA master data service</a> &gt; <a href="index.source.html" class="el_package">com.sutra.masterdata.service.impl</a> &gt; <span class="el_source">VendorServiceImpl.java</span></div><h1>VendorServiceImpl.java</h1><pre class="source lang-java linenums">package com.sutra.masterdata.service.impl;
+
+import com.sutra.masterdata.service.internal.CodeGenerator;
+import com.sutra.masterdata.service.VendorService;
+import com.sutra.common.audit.AuditService;
+
+import static com.sutra.common.audit.AuditService.details;
+
+import com.sutra.masterdata.entity.Vendor;
+import com.sutra.common.error.BusinessRuleException;
+import com.sutra.common.error.DuplicateResourceException;
+import com.sutra.masterdata.exception.VendorNotFoundException;
+import com.sutra.masterdata.client.UsageClient;
+import com.sutra.masterdata.repository.VendorRepository;
+import com.sutra.masterdata.dto.request.MasterDataRequests.VendorRequest;
+import com.sutra.masterdata.dto.request.MasterDataRequests.VendorProfileRequest;
+import com.sutra.masterdata.dto.request.MasterDataRequests.VendorSignupRequest;
+import com.sutra.masterdata.dto.response.MasterDataResponses.VendorResponse;
+import com.sutra.common.web.PageResponse;
+import com.sutra.common.util.Text;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Sort;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+@Service
+@Transactional
+public class VendorServiceImpl implements VendorService {
+
+    static final String AUDIT_TYPE = &quot;VENDOR&quot;;
+
+    private final VendorRepository vendorRepository;
+    private final UsageClient usage;
+    private final AuditService auditService;
+
+<span class="fc" id="L36">    public VendorServiceImpl(VendorRepository vendorRepository, UsageClient usage,</span>
+                         AuditService auditService) {
+<span class="fc" id="L38">        this.vendorRepository = vendorRepository;</span>
+<span class="fc" id="L39">        this.usage = usage;</span>
+<span class="fc" id="L40">        this.auditService = auditService;</span>
+<span class="fc" id="L41">    }</span>
+
+    @Transactional(readOnly = true)
+    @Override
+    public PageResponse&lt;VendorResponse&gt; search(String q, int page, int size) {
+<span class="nc" id="L46">        var pageable = PageRequest.of(page, Math.min(size, 200), Sort.by(Vendor::getName));</span>
+<span class="nc" id="L47">        return PageResponse.of(vendorRepository.search(Text.blankToNull(q), pageable), VendorResponse::from);</span>
+    }
+
+    @Transactional(readOnly = true)
+    @Override
+    public VendorResponse get(Long id) {
+<span class="nc" id="L53">        return VendorResponse.from(find(id));</span>
+    }
+
+    @Override
+    public VendorResponse create(VendorRequest request) {
+<span class="fc" id="L58">        String code = CodeGenerator.normalise(request.code());</span>
+<span class="pc bpc" id="L59" title="1 of 2 branches missed.">        if (vendorRepository.existsByCodeIgnoreCase(code)) {</span>
+<span class="nc" id="L60">            throw new DuplicateResourceException(&quot;A vendor with code &quot; + code + &quot; already exists&quot;);</span>
+        }
+<span class="fc" id="L62">        Vendor vendor = new Vendor();</span>
+<span class="fc" id="L63">        apply(vendor, request, code);</span>
+<span class="fc" id="L64">        vendor = vendorRepository.save(vendor);</span>
+<span class="fc" id="L65">        auditService.record(AUDIT_TYPE, vendor.getId(), &quot;CREATED&quot;, details(&quot;code&quot;, code, &quot;name&quot;, vendor.getName()));</span>
+<span class="fc" id="L66">        return VendorResponse.from(vendor);</span>
+    }
+
+    /** A vendor approved after signing up on the portal; its code is made from the name. */
+    @Override
+    public VendorResponse register(VendorSignupRequest request) {
+<span class="fc" id="L72">        String code = CodeGenerator.fromName(request.name(), vendorRepository::existsByCodeIgnoreCase);</span>
+<span class="fc" id="L73">        Vendor vendor = new Vendor();</span>
+<span class="fc" id="L74">        apply(vendor, new VendorRequest(code, request.name(), request.contactPerson(), request.email(), request.phone(),</span>
+<span class="fc" id="L75">                request.address(), request.taxNumber(), request.website(), true), code);</span>
+<span class="fc" id="L76">        vendor = vendorRepository.save(vendor);</span>
+<span class="fc" id="L77">        auditService.record(AUDIT_TYPE, vendor.getId(), &quot;CREATED&quot;, details(&quot;code&quot;, code, &quot;name&quot;, vendor.getName(),</span>
+<span class="fc" id="L78">                &quot;via&quot;, &quot;vendor sign-up&quot;));</span>
+<span class="fc" id="L79">        return VendorResponse.from(vendor);</span>
+    }
+
+    /** A vendor updating its own contact and tax details on the portal. */
+    @Override
+    public VendorResponse updateProfile(Long id, VendorProfileRequest request) {
+<span class="fc" id="L85">        Vendor vendor = find(id);</span>
+<span class="fc" id="L86">        vendor.setContactPerson(Text.blankToNull(request.contactPerson()));</span>
+<span class="fc" id="L87">        vendor.setEmail(Text.blankToNull(request.email()));</span>
+<span class="fc" id="L88">        vendor.setPhone(Text.blankToNull(request.phone()));</span>
+<span class="fc" id="L89">        vendor.setAddress(Text.blankToNull(request.address()));</span>
+<span class="fc" id="L90">        vendor.setTaxNumber(Text.blankToNull(request.taxNumber()));</span>
+<span class="fc" id="L91">        vendor.setWebsite(Text.blankToNull(request.website()));</span>
+<span class="fc" id="L92">        auditService.record(AUDIT_TYPE, id, &quot;PROFILE_UPDATED&quot;, details(&quot;by&quot;, &quot;vendor&quot;));</span>
+<span class="fc" id="L93">        return VendorResponse.from(vendor);</span>
+    }
+
+    @Override
+    public VendorResponse update(Long id, VendorRequest request) {
+<span class="fc" id="L98">        Vendor vendor = find(id);</span>
+<span class="fc" id="L99">        String code = CodeGenerator.normalise(request.code());</span>
+<span class="pc bpc" id="L100" title="1 of 2 branches missed.">        if (vendorRepository.existsByCodeIgnoreCaseAndIdNot(code, id)) {</span>
+<span class="fc" id="L101">            throw new DuplicateResourceException(&quot;A vendor with code &quot; + code + &quot; already exists&quot;);</span>
+        }
+<span class="nc" id="L103">        apply(vendor, request, code);</span>
+<span class="nc" id="L104">        auditService.record(AUDIT_TYPE, id, &quot;UPDATED&quot;, details(&quot;code&quot;, code, &quot;active&quot;, vendor.isActive()));</span>
+<span class="nc" id="L105">        return VendorResponse.from(vendor);</span>
+    }
+
+    @Override
+    public void delete(Long id) {
+<span class="fc" id="L110">        Vendor vendor = find(id);</span>
+<span class="fc bfc" id="L111" title="All 2 branches covered.">        if (usage.procurementUsage(&quot;vendors&quot;, id).inUse()) {</span>
+<span class="fc" id="L112">            throw new BusinessRuleException(&quot;VENDOR_IN_USE&quot;,</span>
+<span class="fc" id="L113">                    vendor.getName() + &quot; has quotations on record; deactivate the vendor instead&quot;);</span>
+        }
+<span class="pc bpc" id="L115" title="1 of 2 branches missed.">        if (usage.vendorLogins(id) &gt; 0) {</span>
+<span class="fc" id="L116">            throw new BusinessRuleException(&quot;VENDOR_HAS_LOGINS&quot;,</span>
+<span class="fc" id="L117">                    vendor.getName() + &quot; still has user logins; delete or relink them first, or deactivate the vendor&quot;);</span>
+        }
+<span class="nc" id="L119">        vendorRepository.delete(vendor);</span>
+<span class="nc" id="L120">        auditService.record(AUDIT_TYPE, id, &quot;DELETED&quot;, details(&quot;code&quot;, vendor.getCode()));</span>
+<span class="nc" id="L121">    }</span>
+
+    @Override
+    public Vendor find(Long id) {
+<span class="fc" id="L125">        return vendorRepository.findById(id).orElseThrow(() -&gt; new VendorNotFoundException(id));</span>
+    }
+
+    /** A vendor that can receive new quotations. */
+    @Override
+    public Vendor findActive(Long id) {
+<span class="fc" id="L131">        Vendor vendor = find(id);</span>
+<span class="pc bpc" id="L132" title="1 of 2 branches missed.">        if (!vendor.isActive()) {</span>
+<span class="fc" id="L133">            throw new BusinessRuleException(&quot;VENDOR_INACTIVE&quot;, vendor.getName() + &quot; is inactive&quot;);</span>
+        }
+<span class="nc" id="L135">        return vendor;</span>
+    }
+
+    private static void apply(Vendor vendor, VendorRequest request, String code) {
+<span class="fc" id="L139">        vendor.setCode(code);</span>
+<span class="fc" id="L140">        vendor.setName(request.name().trim());</span>
+<span class="fc" id="L141">        vendor.setContactPerson(Text.blankToNull(request.contactPerson()));</span>
+<span class="fc" id="L142">        vendor.setEmail(Text.blankToNull(request.email()));</span>
+<span class="fc" id="L143">        vendor.setPhone(Text.blankToNull(request.phone()));</span>
+<span class="fc" id="L144">        vendor.setAddress(Text.blankToNull(request.address()));</span>
+<span class="fc" id="L145">        vendor.setTaxNumber(Text.blankToNull(request.taxNumber()));</span>
+<span class="fc" id="L146">        vendor.setWebsite(Text.blankToNull(request.website()));</span>
+<span class="pc bpc" id="L147" title="2 of 4 branches missed.">        vendor.setActive(request.active() == null || request.active());</span>
+<span class="fc" id="L148">    }</span>
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.13.202504020838</span></div></body></html>

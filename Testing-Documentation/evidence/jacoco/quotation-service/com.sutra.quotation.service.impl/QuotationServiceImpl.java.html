@@ -1,0 +1,578 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>QuotationServiceImpl.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">SUTRA quotation service</a> &gt; <a href="index.source.html" class="el_package">com.sutra.quotation.service.impl</a> &gt; <span class="el_source">QuotationServiceImpl.java</span></div><h1>QuotationServiceImpl.java</h1><pre class="source lang-java linenums"><span class="fc" id="L1">package com.sutra.quotation.service.impl;</span>
+
+import com.sutra.api.document.DocumentContracts.StoredDocument;
+import com.sutra.api.enums.ExtractionSource;
+import com.sutra.api.enums.FlagSeverity;
+import com.sutra.api.enums.PurchaseRequestStatus;
+import com.sutra.api.enums.QuotationStatus;
+import com.sutra.api.extraction.ExtractionChoice;
+import com.sutra.api.internal.InternalContracts.RfqQuotationUsage;
+import com.sutra.api.quotation.QuotationRequests.QuotationItemRequest;
+import com.sutra.api.quotation.QuotationRequests.QuotationUpdateRequest;
+import com.sutra.api.quotation.QuotationResponses.QuotationResponse;
+import com.sutra.api.quotation.QuotationResponses.QuotationSummary;
+import com.sutra.api.rfq.PurchaseRequestResponses.PurchaseRequestResponse;
+import com.sutra.api.rfq.PurchaseRequestResponses.RequestItemResponse;
+import com.sutra.api.rules.FlagCodes;
+import com.sutra.common.audit.AuditService;
+import com.sutra.common.error.BusinessRuleException;
+import com.sutra.common.error.DuplicateResourceException;
+import com.sutra.common.error.ResourceNotFoundException;
+import com.sutra.common.security.CurrentUserProvider;
+import com.sutra.common.util.Text;
+import com.sutra.quotation.client.DecisionClient;
+import com.sutra.quotation.client.DocumentStoreClient;
+import com.sutra.quotation.client.MasterDataClient;
+import com.sutra.quotation.client.RfqClient;
+import com.sutra.quotation.dto.response.DownloadedFile;
+import com.sutra.quotation.entity.NamedRef;
+import com.sutra.quotation.entity.Quotation;
+import com.sutra.quotation.entity.QuotationFile;
+import com.sutra.quotation.entity.QuotationFlag;
+import com.sutra.quotation.entity.QuotationItem;
+import com.sutra.quotation.entity.UserRef;
+import com.sutra.quotation.exception.InvalidQuotationFileException;
+import com.sutra.quotation.exception.QuotationNotFoundException;
+import com.sutra.quotation.mapper.QuotationMapper;
+import com.sutra.quotation.repository.QuotationFileRepository;
+import com.sutra.quotation.repository.QuotationRepository;
+import com.sutra.quotation.service.QuotationService;
+import com.sutra.quotation.service.internal.AfterCommit;
+import com.sutra.quotation.service.internal.QuotationReviewService;
+import com.sutra.quotation.service.internal.ReadingQueue;
+import com.sutra.quotation.service.internal.RecordAccessPolicy;
+import jakarta.persistence.EntityManager;
+import jakarta.persistence.LockModeType;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.multipart.MultipartFile;
+
+import java.io.IOException;
+import java.math.BigDecimal;
+import java.math.RoundingMode;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.time.Clock;
+import java.time.Duration;
+import java.time.Instant;
+import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.HexFormat;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Set;
+
+import static com.sutra.common.audit.AuditService.details;
+
+@Service
+@Transactional
+public class QuotationServiceImpl implements QuotationService {
+
+    public static final String AUDIT_TYPE = &quot;QUOTATION&quot;;
+    static final String RFQ_AUDIT_TYPE = &quot;PURCHASE_REQUEST&quot;;
+
+    /** Upper limit of files in one quotation. */
+    public static final int MAX_FILES_PER_QUOTATION = 10;
+
+    /** A quotation stuck in PROCESSING longer than this (e.g. after a restart) may be read again. */
+<span class="fc" id="L79">    static final Duration STALE_PROCESSING = Duration.ofMinutes(15);</span>
+
+<span class="fc" id="L81">    private static final Set&lt;PurchaseRequestStatus&gt; ACCEPTS_QUOTATIONS =</span>
+<span class="fc" id="L82">            Set.of(PurchaseRequestStatus.OPEN, PurchaseRequestStatus.UNDER_REVIEW);</span>
+<span class="fc" id="L83">    private static final Set&lt;String&gt; EXTRACTION_ITEM_CODES = Set.of(FlagCodes.LOW_CONFIDENCE);</span>
+
+    private final QuotationRepository quotationRepository;
+    private final QuotationFileRepository fileRepository;
+    private final RfqClient rfqs;
+    private final MasterDataClient masterData;
+    private final DocumentStoreClient documents;
+    private final DecisionClient decisions;
+    private final ReadingQueue readingQueue;
+    private final QuotationReviewService reviewService;
+    private final RecordAccessPolicy accessPolicy;
+    private final CurrentUserProvider currentUser;
+    private final AuditService auditService;
+    private final EntityManager entityManager;
+    private final Clock clock;
+
+<span class="fc" id="L99">    public QuotationServiceImpl(QuotationRepository quotationRepository, QuotationFileRepository fileRepository,</span>
+                                RfqClient rfqs, MasterDataClient masterData, DocumentStoreClient documents,
+                                DecisionClient decisions, ReadingQueue readingQueue,
+                                QuotationReviewService reviewService, RecordAccessPolicy accessPolicy,
+                                CurrentUserProvider currentUser, AuditService auditService,
+                                EntityManager entityManager, Clock clock) {
+<span class="fc" id="L105">        this.quotationRepository = quotationRepository;</span>
+<span class="fc" id="L106">        this.fileRepository = fileRepository;</span>
+<span class="fc" id="L107">        this.rfqs = rfqs;</span>
+<span class="fc" id="L108">        this.masterData = masterData;</span>
+<span class="fc" id="L109">        this.documents = documents;</span>
+<span class="fc" id="L110">        this.decisions = decisions;</span>
+<span class="fc" id="L111">        this.readingQueue = readingQueue;</span>
+<span class="fc" id="L112">        this.reviewService = reviewService;</span>
+<span class="fc" id="L113">        this.accessPolicy = accessPolicy;</span>
+<span class="fc" id="L114">        this.currentUser = currentUser;</span>
+<span class="fc" id="L115">        this.auditService = auditService;</span>
+<span class="fc" id="L116">        this.entityManager = entityManager;</span>
+<span class="fc" id="L117">        this.clock = clock;</span>
+<span class="fc" id="L118">    }</span>
+
+    // ---------- queries ----------
+
+    @Override
+    @Transactional(readOnly = true)
+    public List&lt;QuotationSummary&gt; listForRequest(Long purchaseRequestId) {
+<span class="nc" id="L125">        rfqs.get(purchaseRequestId); // 404 for an unknown RFQ</span>
+<span class="nc" id="L126">        return quotationRepository.findByPurchaseRequestIdOrderByIdAsc(purchaseRequestId).stream()</span>
+<span class="nc" id="L127">                .map(q -&gt; QuotationMapper.quotationSummary(q, fileRepository.countByQuotationId(q.getId()))).toList();</span>
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public QuotationResponse get(Long id) {
+<span class="fc" id="L133">        return toResponse(find(id));</span>
+    }
+
+    @Override
+    public DownloadedFile download(Long quotationId, Long fileId) {
+<span class="nc" id="L138">        find(quotationId);</span>
+<span class="nc" id="L139">        QuotationFile file = fileRepository.findByIdAndQuotationId(fileId, quotationId)</span>
+<span class="nc" id="L140">                .orElseThrow(() -&gt; new ResourceNotFoundException(&quot;Quotation file&quot;, fileId));</span>
+<span class="nc" id="L141">        byte[] bytes = documents.content(file.getDocumentId());</span>
+<span class="nc" id="L142">        auditService.record(AUDIT_TYPE, quotationId, &quot;FILE_DOWNLOADED&quot;, details(&quot;fileName&quot;, file.getFileName()));</span>
+<span class="nc" id="L143">        return new DownloadedFile(file.getFileName(), file.getContentType(), file.getSizeBytes(), bytes);</span>
+    }
+
+    // ---------- upload and reading ----------
+
+    @Override
+    public QuotationResponse upload(Long purchaseRequestId, Long vendorId, List&lt;MultipartFile&gt; files,
+                                    ExtractionChoice choice) {
+<span class="fc" id="L151">        decisions.checkEngine(choice);</span>
+<span class="fc" id="L152">        PurchaseRequestResponse rfq = rfqs.get(purchaseRequestId);</span>
+<span class="fc" id="L153">        accessPolicy.requireModify(rfq);</span>
+<span class="fc" id="L154">        requireEditable(rfq);</span>
+<span class="fc" id="L155">        Quotation q = createQuotation(rfq, vendorRef(vendorId), files, UserRef.of(currentUser.requirePrincipal()),</span>
+<span class="fc" id="L156">                choice, false);</span>
+<span class="fc" id="L157">        return toResponse(q, rfq);</span>
+    }
+
+    @Override
+    public Quotation submitForVendor(PurchaseRequestResponse rfq, NamedRef vendor, List&lt;MultipartFile&gt; files) {
+<span class="fc" id="L162">        return createQuotation(rfq, vendor, files, UserRef.of(currentUser.requirePrincipal()), ExtractionChoice.AUTO, true);</span>
+    }
+
+    /** Creates a quotation with its files and queues reading. The caller has checked who may upload. */
+    private Quotation createQuotation(PurchaseRequestResponse rfq, NamedRef vendor, List&lt;MultipartFile&gt; files,
+                                      UserRef user, ExtractionChoice choice, boolean submittedByVendor) {
+<span class="fc" id="L168">        requireAcceptsQuotations(rfq);</span>
+<span class="fc bfc" id="L169" title="All 2 branches covered.">        if (!quotationRepository.findByPurchaseRequestIdAndVendorId(rfq.id(), vendor.getId()).isEmpty()) {</span>
+<span class="fc" id="L170">            throw new DuplicateResourceException(vendor.getName() + &quot; already has a quotation on &quot;</span>
+<span class="fc" id="L171">                    + rfq.requestNumber() + &quot;. Add the new files to that quotation instead of creating a second one.&quot;);</span>
+        }
+<span class="fc" id="L173">        List&lt;IncomingFile&gt; incoming = checkFiles(files, rfq.id(), 0);</span>
+<span class="fc" id="L174">        Quotation q = new Quotation();</span>
+<span class="fc" id="L175">        q.setPurchaseRequestId(rfq.id());</span>
+<span class="fc" id="L176">        q.setRequestNumber(rfq.requestNumber());</span>
+<span class="fc" id="L177">        q.setVendor(vendor);</span>
+<span class="fc" id="L178">        q.setStatus(QuotationStatus.UPLOADED);</span>
+<span class="fc" id="L179">        q.setUploadedBy(user);</span>
+<span class="fc" id="L180">        q.setSubmittedByVendor(submittedByVendor);</span>
+<span class="fc" id="L181">        q = quotationRepository.save(q);</span>
+<span class="fc" id="L182">        List&lt;QuotationFile&gt; stored = storeFiles(q, incoming, user);</span>
+<span class="fc" id="L183">        auditService.record(AUDIT_TYPE, q.getId(), &quot;UPLOADED&quot;, details(&quot;purchaseRequest&quot;, rfq.requestNumber(),</span>
+<span class="fc" id="L184">                &quot;vendor&quot;, vendor.getName(), &quot;files&quot;, fileSummary(stored), &quot;engine&quot;, choice.describe(),</span>
+<span class="fc" id="L185">                &quot;submittedByVendor&quot;, submittedByVendor));</span>
+<span class="fc" id="L186">        readingQueue.queue(q.getId(), choice);</span>
+<span class="fc" id="L187">        return q;</span>
+    }
+
+    @Override
+    public QuotationResponse addFiles(Long quotationId, List&lt;MultipartFile&gt; files) {
+<span class="fc" id="L192">        Editable e = findEditable(quotationId, false);</span>
+<span class="fc" id="L193">        requireAcceptsQuotations(e.rfq());</span>
+<span class="fc" id="L194">        long existing = fileRepository.countByQuotationId(quotationId);</span>
+<span class="fc" id="L195">        List&lt;IncomingFile&gt; incoming = checkFiles(files, e.rfq().id(), existing);</span>
+<span class="fc" id="L196">        List&lt;QuotationFile&gt; stored = storeFiles(e.quotation(), incoming, UserRef.of(currentUser.requirePrincipal()));</span>
+<span class="fc" id="L197">        requeue(e.quotation(), ExtractionChoice.AUTO);</span>
+<span class="fc" id="L198">        auditService.record(AUDIT_TYPE, quotationId, &quot;FILES_ADDED&quot;, details(&quot;files&quot;, fileSummary(stored)));</span>
+<span class="fc" id="L199">        return toResponse(e.quotation(), e.rfq());</span>
+    }
+
+    @Override
+    public QuotationResponse removeFile(Long quotationId, Long fileId) {
+<span class="fc" id="L204">        Editable e = findEditable(quotationId, false);</span>
+<span class="fc" id="L205">        QuotationFile file = fileRepository.findByIdAndQuotationId(fileId, quotationId)</span>
+<span class="pc" id="L206">                .orElseThrow(() -&gt; new ResourceNotFoundException(&quot;Quotation file&quot;, fileId));</span>
+<span class="pc bpc" id="L207" title="1 of 2 branches missed.">        if (fileRepository.countByQuotationId(quotationId) &lt;= 1) {</span>
+<span class="fc" id="L208">            throw new BusinessRuleException(&quot;LAST_FILE&quot;, &quot;A quotation must keep at least one file; delete the quotation instead&quot;);</span>
+        }
+<span class="nc" id="L210">        fileRepository.delete(file);</span>
+<span class="nc" id="L211">        fileRepository.flush();</span>
+<span class="nc" id="L212">        Long documentId = file.getDocumentId();</span>
+<span class="nc" id="L213">        AfterCommit.run(() -&gt; documents.delete(List.of(documentId)));</span>
+<span class="nc" id="L214">        requeue(e.quotation(), ExtractionChoice.AUTO);</span>
+<span class="nc" id="L215">        auditService.record(AUDIT_TYPE, quotationId, &quot;FILE_REMOVED&quot;, details(&quot;fileName&quot;, file.getFileName()));</span>
+<span class="nc" id="L216">        return toResponse(e.quotation(), e.rfq());</span>
+    }
+
+    @Override
+    public QuotationResponse reprocess(Long id, ExtractionChoice choice) {
+<span class="nc" id="L221">        decisions.checkEngine(choice);</span>
+<span class="nc" id="L222">        Editable e = findEditable(id, true);</span>
+<span class="nc" id="L223">        requeue(e.quotation(), choice);</span>
+<span class="nc" id="L224">        auditService.record(AUDIT_TYPE, id, &quot;REPROCESS_REQUESTED&quot;, details(&quot;attempt&quot;,</span>
+<span class="nc" id="L225">                e.quotation().getProcessingAttempts() + 1, &quot;engine&quot;, choice.describe()));</span>
+<span class="nc" id="L226">        return toResponse(e.quotation(), e.rfq());</span>
+    }
+
+    /** Queues reading again. Previous lines and flags are replaced when the new reading arrives. */
+    private void requeue(Quotation q, ExtractionChoice choice) {
+<span class="fc" id="L231">        q.setStatus(QuotationStatus.UPLOADED);</span>
+<span class="fc" id="L232">        q.setFailureReason(null);</span>
+<span class="fc" id="L233">        readingQueue.queue(q.getId(), choice);</span>
+<span class="fc" id="L234">    }</span>
+
+    /** An active vendor from master data, as kept on the quotation. */
+    private NamedRef vendorRef(Long vendorId) {
+<span class="fc" id="L238">        MasterDataClient.VendorSnapshot vendor = masterData.activeVendor(vendorId);</span>
+<span class="fc" id="L239">        return new NamedRef(vendor.id(), vendor.name());</span>
+    }
+
+    // ---------- manual review and correction ----------
+
+    @Override
+    public QuotationResponse updateHeader(Long id, QuotationUpdateRequest request) {
+<span class="nc" id="L246">        Editable e = findEditable(id, false);</span>
+<span class="nc" id="L247">        Quotation q = e.quotation();</span>
+<span class="nc bnc" id="L248" title="All 2 branches missed.">        if (!q.getVendor().getId().equals(request.vendorId())) {</span>
+<span class="nc" id="L249">            q.setVendor(vendorRef(request.vendorId()));</span>
+        }
+<span class="nc" id="L251">        q.setQuotationNumber(Text.blankToNull(request.quotationNumber()));</span>
+<span class="nc" id="L252">        q.setQuotationDate(request.quotationDate());</span>
+<span class="nc" id="L253">        q.setValidUntil(request.validUntil());</span>
+<span class="nc" id="L254">        q.setCurrency(Text.blankToNull(request.currency()));</span>
+<span class="nc" id="L255">        q.setStatedSubtotal(request.statedSubtotal());</span>
+<span class="nc" id="L256">        q.setStatedTaxTotal(request.statedTaxTotal());</span>
+<span class="nc" id="L257">        q.setStatedGrandTotal(request.statedGrandTotal());</span>
+<span class="nc" id="L258">        q.setDeliveryTerms(Text.blankToNull(request.deliveryTerms()));</span>
+<span class="nc" id="L259">        q.setPaymentTerms(Text.blankToNull(request.paymentTerms()));</span>
+<span class="nc" id="L260">        q.setWarrantyTerms(Text.blankToNull(request.warrantyTerms()));</span>
+<span class="nc" id="L261">        q.setNotes(Text.blankToNull(request.notes()));</span>
+<span class="nc" id="L262">        markManual(q);</span>
+<span class="nc" id="L263">        reviewService.revalidate(q, e.rfq());</span>
+<span class="nc" id="L264">        auditService.record(AUDIT_TYPE, id, &quot;HEADER_CORRECTED&quot;, details(&quot;vendorId&quot;, request.vendorId(),</span>
+<span class="nc" id="L265">                &quot;quotationNumber&quot;, q.getQuotationNumber(), &quot;validUntil&quot;, q.getValidUntil(), &quot;currency&quot;, q.getCurrency(),</span>
+<span class="nc" id="L266">                &quot;statedGrandTotal&quot;, q.getStatedGrandTotal()));</span>
+<span class="nc" id="L267">        return toResponse(q, e.rfq());</span>
+    }
+
+    @Override
+    public QuotationResponse addItem(Long id, QuotationItemRequest request) {
+<span class="fc" id="L272">        Editable e = findEditable(id, false);</span>
+<span class="fc" id="L273">        Quotation q = e.quotation();</span>
+<span class="fc" id="L274">        QuotationItem item = new QuotationItem();</span>
+<span class="fc" id="L275">        item.setLineNumber(q.nextLineNumber());</span>
+<span class="fc" id="L276">        applyItem(e.rfq(), item, request);</span>
+<span class="fc" id="L277">        q.addItem(item);</span>
+<span class="fc" id="L278">        quotationRepository.flush();</span>
+<span class="pc bnc" id="L279" title="All 4 branches missed.">        q.getFlags().removeIf(f -&gt; !f.isResolved() &amp;&amp; FlagCodes.NO_ITEMS_EXTRACTED.equals(f.getCode()));</span>
+<span class="fc" id="L280">        markManual(q);</span>
+<span class="fc" id="L281">        reviewService.revalidate(q, e.rfq());</span>
+<span class="fc" id="L282">        auditService.record(AUDIT_TYPE, id, &quot;ITEM_ADDED&quot;, itemDetails(item, e.rfq()));</span>
+<span class="fc" id="L283">        return toResponse(q, e.rfq());</span>
+    }
+
+    @Override
+    public QuotationResponse updateItem(Long id, Long itemId, QuotationItemRequest request) {
+<span class="fc" id="L288">        Editable e = findEditable(id, false);</span>
+<span class="fc" id="L289">        Quotation q = e.quotation();</span>
+<span class="fc" id="L290">        QuotationItem item = findItem(q, itemId);</span>
+<span class="fc" id="L291">        var before = itemDetails(item, e.rfq());</span>
+<span class="fc" id="L292">        applyItem(e.rfq(), item, request);</span>
+        // A person has checked this line, so its reading-confidence notes are settled.
+<span class="fc" id="L294">        UserRef user = UserRef.of(currentUser.requirePrincipal());</span>
+<span class="fc" id="L295">        q.getFlags().stream()</span>
+<span class="pc bpc" id="L296" title="3 of 6 branches missed.">                .filter(f -&gt; !f.isResolved() &amp;&amp; f.getQuotationItem() == item &amp;&amp; EXTRACTION_ITEM_CODES.contains(f.getCode()))</span>
+<span class="fc" id="L297">                .forEach(f -&gt; f.resolve(user));</span>
+<span class="fc" id="L298">        markManual(q);</span>
+<span class="fc" id="L299">        reviewService.revalidate(q, e.rfq());</span>
+<span class="fc" id="L300">        auditService.record(AUDIT_TYPE, id, &quot;ITEM_CORRECTED&quot;, details(&quot;before&quot;, before, &quot;after&quot;, itemDetails(item, e.rfq())));</span>
+<span class="fc" id="L301">        return toResponse(q, e.rfq());</span>
+    }
+
+    @Override
+    public QuotationResponse deleteItem(Long id, Long itemId) {
+<span class="nc" id="L306">        Editable e = findEditable(id, false);</span>
+<span class="nc" id="L307">        Quotation q = e.quotation();</span>
+<span class="nc" id="L308">        QuotationItem item = findItem(q, itemId);</span>
+<span class="nc bnc" id="L309" title="All 2 branches missed.">        q.getFlags().removeIf(f -&gt; f.getQuotationItem() == item);</span>
+<span class="nc" id="L310">        q.getItems().remove(item);</span>
+<span class="nc" id="L311">        quotationRepository.flush();</span>
+<span class="nc" id="L312">        markManual(q);</span>
+<span class="nc" id="L313">        reviewService.revalidate(q, e.rfq());</span>
+<span class="nc" id="L314">        auditService.record(AUDIT_TYPE, id, &quot;ITEM_DELETED&quot;, itemDetails(item, e.rfq()));</span>
+<span class="nc" id="L315">        return toResponse(q, e.rfq());</span>
+    }
+
+    @Override
+    public QuotationResponse resolveFlag(Long id, Long flagId, String comment) {
+<span class="fc" id="L320">        Editable e = findEditable(id, false);</span>
+<span class="fc" id="L321">        Quotation q = e.quotation();</span>
+<span class="fc" id="L322">        QuotationFlag flag = q.getFlags().stream().filter(f -&gt; f.getId().equals(flagId)).findFirst()</span>
+<span class="pc" id="L323">                .orElseThrow(() -&gt; new ResourceNotFoundException(&quot;Review flag&quot;, flagId));</span>
+<span class="pc bpc" id="L324" title="1 of 2 branches missed.">        if (flag.isResolved()) {</span>
+<span class="nc" id="L325">            return toResponse(q, e.rfq());</span>
+        }
+<span class="pc bpc" id="L327" title="1 of 2 branches missed.">        if (flag.getSeverity() == FlagSeverity.ERROR) {</span>
+<span class="fc" id="L328">            throw new BusinessRuleException(&quot;ERROR_FLAG_NEEDS_FIX&quot;,</span>
+<span class="fc" id="L329">                    &quot;Errors cannot be dismissed; correct the data instead (&quot; + flag.getMessage() + &quot;)&quot;);</span>
+        }
+<span class="nc" id="L331">        flag.resolve(UserRef.of(currentUser.requirePrincipal()));</span>
+<span class="nc" id="L332">        reviewService.updateStatus(q);</span>
+<span class="nc" id="L333">        auditService.record(AUDIT_TYPE, id, &quot;FLAG_RESOLVED&quot;, details(&quot;flag&quot;, flag.getCode(), &quot;field&quot;,</span>
+<span class="nc" id="L334">                flag.getFieldName(), &quot;message&quot;, flag.getMessage(), &quot;comment&quot;, Text.blankToNull(comment)));</span>
+<span class="nc" id="L335">        return toResponse(q, e.rfq());</span>
+    }
+
+    @Override
+    public void delete(Long id) {
+<span class="fc" id="L340">        Quotation q = find(id);</span>
+<span class="fc" id="L341">        PurchaseRequestResponse rfq = rfqs.get(q.getPurchaseRequestId());</span>
+<span class="fc" id="L342">        accessPolicy.requireModify(rfq);</span>
+<span class="pc bpc" id="L343" title="1 of 2 branches missed.">        if (!rfq.editable()) {</span>
+<span class="nc" id="L344">            throw new BusinessRuleException(&quot;PR_CLOSED&quot;, &quot;Quotations of a closed request cannot be deleted&quot;);</span>
+        }
+<span class="pc bpc" id="L346" title="1 of 2 branches missed.">        if (q.getStatus() == QuotationStatus.PROCESSING) {</span>
+<span class="nc" id="L347">            throw new BusinessRuleException(&quot;QUOTATION_PROCESSING&quot;, &quot;Wait for processing to finish before deleting&quot;);</span>
+        }
+<span class="pc bpc" id="L349" title="1 of 2 branches missed.">        if (decisions.comparisonReferences(id) &gt; 0) {</span>
+<span class="fc" id="L350">            throw new BusinessRuleException(&quot;QUOTATION_IN_COMPARISON&quot;,</span>
+<span class="fc" id="L351">                    &quot;This quotation is part of a saved comparison report and is kept for the audit trail&quot;);</span>
+        }
+<span class="nc" id="L353">        List&lt;Long&gt; documentIds = fileRepository.findByQuotationIdOrderByIdAsc(id).stream()</span>
+<span class="nc" id="L354">                .map(QuotationFile::getDocumentId).toList();</span>
+<span class="nc" id="L355">        auditService.record(AUDIT_TYPE, id, &quot;DELETED&quot;, details(&quot;purchaseRequest&quot;, q.getRequestNumber(),</span>
+<span class="nc" id="L356">                &quot;vendor&quot;, q.getVendor().getName()));</span>
+        // Also on the request, so its timeline still shows the quotation after the row is gone.
+<span class="nc" id="L358">        auditService.record(RFQ_AUDIT_TYPE, q.getPurchaseRequestId(), &quot;QUOTATION_DELETED&quot;,</span>
+<span class="nc" id="L359">                details(&quot;quotationId&quot;, id, &quot;vendor&quot;, q.getVendor().getName()));</span>
+<span class="nc" id="L360">        quotationRepository.delete(q); // files rows go with it (cascade); the stored bytes after commit</span>
+<span class="nc" id="L361">        AfterCommit.run(() -&gt; documents.delete(documentIds));</span>
+<span class="nc" id="L362">    }</span>
+
+    // ---------- for the RFQ service ----------
+
+    @Override
+    public void revalidateForRfq(Long rfqId) {
+<span class="fc" id="L368">        List&lt;Quotation&gt; quotations = quotationRepository.findByPurchaseRequestIdOrderByIdAsc(rfqId).stream()</span>
+<span class="pc bpc" id="L369" title="1 of 4 branches missed.">                .filter(q -&gt; q.getStatus() != QuotationStatus.PROCESSING &amp;&amp; q.getStatus() != QuotationStatus.UPLOADED)</span>
+<span class="fc" id="L370">                .toList();</span>
+<span class="pc bpc" id="L371" title="1 of 2 branches missed.">        if (quotations.isEmpty()) {</span>
+<span class="nc" id="L372">            return;</span>
+        }
+<span class="fc" id="L374">        PurchaseRequestResponse rfq = rfqs.get(rfqId);</span>
+<span class="fc" id="L375">        quotations.forEach(q -&gt; reviewService.revalidate(q, rfq));</span>
+<span class="fc" id="L376">    }</span>
+
+    @Override
+    @Transactional(readOnly = true)
+    public RfqQuotationUsage usageForRfq(Long rfqId) {
+<span class="nc" id="L381">        return new RfqQuotationUsage(quotationRepository.countByPurchaseRequestId(rfqId),</span>
+<span class="nc" id="L382">                quotationRepository.findMatchedRequestItemIds(rfqId));</span>
+    }
+
+    // ---------- helpers ----------
+
+    @Override
+    public Quotation find(Long id) {
+<span class="fc" id="L389">        return quotationRepository.findById(id).orElseThrow(() -&gt; new QuotationNotFoundException(id));</span>
+    }
+
+    @Override
+    public QuotationResponse toResponse(Quotation q) {
+<span class="fc" id="L394">        return toResponse(q, rfqs.get(q.getPurchaseRequestId()));</span>
+    }
+
+    private QuotationResponse toResponse(Quotation q, PurchaseRequestResponse rfq) {
+<span class="fc" id="L398">        return QuotationMapper.quotationResponse(q, fileRepository.findByQuotationIdOrderByIdAsc(q.getId()), rfq);</span>
+    }
+
+    /** A quotation the user may change, with its RFQ. */
+    private record Editable(Quotation quotation, PurchaseRequestResponse rfq) {
+    }
+
+    private Editable findEditable(Long id, boolean allowStaleProcessing) {
+<span class="fc" id="L406">        Quotation q = find(id);</span>
+<span class="fc" id="L407">        PurchaseRequestResponse rfq = rfqs.get(q.getPurchaseRequestId());</span>
+<span class="fc" id="L408">        accessPolicy.requireModify(rfq);</span>
+<span class="fc" id="L409">        requireEditable(rfq);</span>
+<span class="fc" id="L410">        requireNotProcessing(q, allowStaleProcessing);</span>
+        // Any edit to items or flags bumps the quotation version, so saved comparisons can detect stale data.
+<span class="fc" id="L412">        entityManager.lock(q, LockModeType.OPTIMISTIC_FORCE_INCREMENT);</span>
+<span class="fc" id="L413">        return new Editable(q, rfq);</span>
+    }
+
+    private static void requireEditable(PurchaseRequestResponse rfq) {
+<span class="pc bpc" id="L417" title="1 of 2 branches missed.">        if (!rfq.editable()) {</span>
+<span class="nc" id="L418">            throw new BusinessRuleException(&quot;PR_CLOSED&quot;, rfq.requestNumber() + &quot; is &quot; + rfq.status()</span>
+                    + &quot;; its quotations can no longer change&quot;);
+        }
+<span class="fc" id="L421">    }</span>
+
+    private void requireNotProcessing(Quotation q, boolean allowStale) {
+<span class="fc bfc" id="L424" title="All 2 branches covered.">        if (q.getStatus() == QuotationStatus.PROCESSING) {</span>
+<span class="pc bpc" id="L425" title="1 of 2 branches missed.">            boolean stale = q.getUpdatedAt() != null</span>
+<span class="nc bnc" id="L426" title="All 2 branches missed.">                    &amp;&amp; q.getUpdatedAt().isBefore(Instant.now(clock).minus(STALE_PROCESSING));</span>
+<span class="pc bpc" id="L427" title="3 of 4 branches missed.">            if (!(allowStale &amp;&amp; stale)) {</span>
+<span class="fc" id="L428">                throw new BusinessRuleException(&quot;QUOTATION_PROCESSING&quot;,</span>
+<span class="fc" id="L429">                        &quot;The quotation is being processed; wait until extraction finishes&quot;);</span>
+            }
+        }
+<span class="fc" id="L432">    }</span>
+
+    private static void requireAcceptsQuotations(PurchaseRequestResponse rfq) {
+<span class="fc bfc" id="L435" title="All 2 branches covered.">        if (!ACCEPTS_QUOTATIONS.contains(rfq.status())) {</span>
+<span class="fc" id="L436">            throw new BusinessRuleException(&quot;PR_NOT_OPEN&quot;,</span>
+<span class="fc" id="L437">                    rfq.requestNumber() + &quot; is not accepting quotations (it is &quot; + rfq.status() + &quot;)&quot;);</span>
+        }
+<span class="pc bpc" id="L439" title="1 of 2 branches missed.">        if (rfq.items().isEmpty()) {</span>
+<span class="nc" id="L440">            throw new BusinessRuleException(&quot;PR_HAS_NO_ITEMS&quot;, &quot;Add the requested items before uploading quotations&quot;);</span>
+        }
+<span class="fc" id="L442">    }</span>
+
+    /** A file as uploaded, with its hash (the document service checks its content). */
+    private record IncomingFile(String fileName, byte[] bytes, String sha256) {
+    }
+
+    /** Count, emptiness and duplicates; the content itself is checked by the document service when stored. */
+    private List&lt;IncomingFile&gt; checkFiles(List&lt;MultipartFile&gt; files, Long purchaseRequestId, long existingCount) {
+<span class="pc bpc" id="L450" title="1 of 2 branches missed.">        List&lt;MultipartFile&gt; nonEmpty = files == null ? List.of()</span>
+<span class="pc bpc" id="L451" title="2 of 4 branches missed.">                : files.stream().filter(f -&gt; f != null &amp;&amp; !f.isEmpty()).toList();</span>
+<span class="pc bpc" id="L452" title="1 of 2 branches missed.">        if (nonEmpty.isEmpty()) {</span>
+<span class="nc" id="L453">            throw new InvalidQuotationFileException(&quot;No file was uploaded, or the files are empty.&quot;);</span>
+        }
+<span class="fc bfc" id="L455" title="All 2 branches covered.">        if (existingCount + nonEmpty.size() &gt; MAX_FILES_PER_QUOTATION) {</span>
+<span class="fc" id="L456">            throw new InvalidQuotationFileException(&quot;A quotation can have at most &quot; + MAX_FILES_PER_QUOTATION</span>
+<span class="fc" id="L457">                    + &quot; files (it has &quot; + existingCount + &quot;, &quot; + nonEmpty.size() + &quot; more were uploaded).&quot;);</span>
+        }
+<span class="fc" id="L459">        List&lt;IncomingFile&gt; incoming = new ArrayList&lt;&gt;();</span>
+<span class="fc" id="L460">        Set&lt;String&gt; hashes = new HashSet&lt;&gt;();</span>
+<span class="fc bfc" id="L461" title="All 2 branches covered.">        for (MultipartFile multipartFile : nonEmpty) {</span>
+<span class="pc bpc" id="L462" title="1 of 2 branches missed.">            String fileName = multipartFile.getOriginalFilename() == null ? &quot;file&quot; : multipartFile.getOriginalFilename();</span>
+<span class="fc" id="L463">            byte[] bytes = readBytes(multipartFile);</span>
+<span class="fc" id="L464">            String sha256 = sha256(bytes);</span>
+<span class="fc bfc" id="L465" title="All 2 branches covered.">            if (!hashes.add(sha256)) {</span>
+<span class="fc" id="L466">                throw new DuplicateResourceException(&quot;'&quot; + displayName(fileName) + &quot;' was selected twice&quot;);</span>
+            }
+<span class="fc bfc" id="L468" title="All 2 branches covered.">            if (quotationRepository.existsFileInRequest(sha256, purchaseRequestId)) {</span>
+<span class="fc" id="L469">                throw new DuplicateResourceException(&quot;'&quot; + displayName(fileName)</span>
+                        + &quot;' was already uploaded for this purchase request&quot;);
+            }
+<span class="fc" id="L472">            incoming.add(new IncomingFile(fileName, bytes, sha256));</span>
+        }
+<span class="fc" id="L474">        return incoming;</span>
+    }
+
+    /** Stores the bytes in the document service (which checks the content) and keeps the references. */
+    private List&lt;QuotationFile&gt; storeFiles(Quotation q, List&lt;IncomingFile&gt; files, UserRef user) {
+<span class="fc" id="L479">        List&lt;StoredDocument&gt; stored = documents.store(</span>
+<span class="fc" id="L480">                files.stream().map(f -&gt; new DocumentStoreClient.Upload(f.fileName(), f.bytes())).toList(),</span>
+<span class="fc" id="L481">                user.getId(), user.getUsername());</span>
+<span class="fc" id="L482">        List&lt;QuotationFile&gt; rows = new ArrayList&lt;&gt;();</span>
+<span class="fc bfc" id="L483" title="All 2 branches covered.">        for (StoredDocument d : stored) {</span>
+<span class="fc" id="L484">            QuotationFile file = new QuotationFile();</span>
+<span class="fc" id="L485">            file.setQuotation(q);</span>
+<span class="fc" id="L486">            file.setDocumentId(d.id());</span>
+<span class="fc" id="L487">            file.setFileName(d.fileName());</span>
+<span class="fc" id="L488">            file.setContentType(d.contentType());</span>
+<span class="fc" id="L489">            file.setFileFormat(d.fileFormat());</span>
+<span class="fc" id="L490">            file.setSizeBytes(d.sizeBytes());</span>
+<span class="fc" id="L491">            file.setSha256(d.sha256());</span>
+<span class="fc" id="L492">            file.setUploadedBy(user);</span>
+<span class="fc" id="L493">            file.setUploadedAt(Instant.now(clock));</span>
+<span class="fc" id="L494">            rows.add(fileRepository.save(file));</span>
+        }
+<span class="fc" id="L496">        List&lt;Long&gt; documentIds = stored.stream().map(StoredDocument::id).toList();</span>
+<span class="fc" id="L497">        Long quotationId = q.getId();</span>
+<span class="fc" id="L498">        AfterCommit.run(() -&gt; documents.attach(documentIds, quotationId));</span>
+<span class="fc" id="L499">        return rows;</span>
+    }
+
+    private static List&lt;Map&lt;String, Object&gt;&gt; fileSummary(List&lt;QuotationFile&gt; files) {
+<span class="fc" id="L503">        return files.stream()</span>
+<span class="fc" id="L504">                .map(f -&gt; details(&quot;fileName&quot;, f.getFileName(), &quot;format&quot;, f.getFileFormat(), &quot;sizeBytes&quot;, f.getSizeBytes()))</span>
+<span class="fc" id="L505">                .toList();</span>
+    }
+
+    private static QuotationItem findItem(Quotation q, Long itemId) {
+<span class="fc" id="L509">        return q.getItems().stream().filter(i -&gt; i.getId().equals(itemId)).findFirst()</span>
+<span class="pc" id="L510">                .orElseThrow(() -&gt; new ResourceNotFoundException(&quot;Quotation item&quot;, itemId));</span>
+    }
+
+    private static void applyItem(PurchaseRequestResponse rfq, QuotationItem item, QuotationItemRequest request) {
+<span class="pc bpc" id="L514" title="1 of 4 branches missed.">        if (request.requestItemId() != null &amp;&amp; rfq.items().stream().noneMatch(r -&gt; r.id().equals(request.requestItemId()))) {</span>
+<span class="fc" id="L515">            throw new BusinessRuleException(&quot;REQUEST_ITEM_MISMATCH&quot;,</span>
+<span class="fc" id="L516">                    &quot;Request item &quot; + request.requestItemId() + &quot; does not belong to this purchase request&quot;);</span>
+        }
+<span class="fc bfc" id="L518" title="All 2 branches covered.">        if (!Objects.equals(item.getRequestItemId(), request.requestItemId())) {</span>
+            // A person chose the match, so it is certain.
+<span class="pc bpc" id="L520" title="1 of 2 branches missed.">            item.setMatchConfidence(request.requestItemId() == null ? null : BigDecimal.ONE.setScale(3, RoundingMode.HALF_UP));</span>
+        }
+<span class="fc" id="L522">        item.setRequestItemId(request.requestItemId());</span>
+<span class="fc" id="L523">        item.setItemCode(Text.blankToNull(request.itemCode()));</span>
+<span class="fc" id="L524">        item.setDescription(request.description().trim());</span>
+<span class="fc" id="L525">        item.setQuantity(request.quantity());</span>
+<span class="fc" id="L526">        item.setUnitOfMeasure(Text.blankToNull(request.unitOfMeasure()));</span>
+<span class="fc" id="L527">        item.setUnitPrice(request.unitPrice());</span>
+<span class="fc" id="L528">        item.setDiscountPercent(request.discountPercent());</span>
+<span class="fc" id="L529">        item.setDiscountAmount(request.discountAmount());</span>
+<span class="fc" id="L530">        item.setTaxPercent(request.taxPercent());</span>
+<span class="fc" id="L531">        item.setTaxAmount(request.taxAmount());</span>
+<span class="fc" id="L532">        item.setStatedLineTotal(request.statedLineTotal());</span>
+<span class="fc" id="L533">        item.setNotes(Text.blankToNull(request.notes()));</span>
+<span class="fc" id="L534">        item.setManuallyEdited(true);</span>
+<span class="fc" id="L535">    }</span>
+
+    /** A failed or unread quotation that a person fills in becomes a manual entry. */
+    private static void markManual(Quotation q) {
+<span class="pc bpc" id="L539" title="1 of 2 branches missed.">        if (q.getExtractionSource() == null) {</span>
+<span class="fc" id="L540">            q.setExtractionSource(ExtractionSource.MANUAL);</span>
+        }
+<span class="pc bpc" id="L542" title="1 of 4 branches missed.">        if (q.getStatus() == QuotationStatus.FAILED || q.getStatus() == QuotationStatus.UPLOADED) {</span>
+<span class="fc" id="L543">            q.setStatus(QuotationStatus.NEEDS_REVIEW);</span>
+<span class="fc" id="L544">            q.setFailureReason(null);</span>
+        }
+<span class="fc" id="L546">    }</span>
+
+    private static Map&lt;String, Object&gt; itemDetails(QuotationItem i, PurchaseRequestResponse rfq) {
+<span class="pc bpc" id="L549" title="1 of 2 branches missed.">        Integer requestLine = i.getRequestItemId() == null ? null : rfq.items().stream()</span>
+<span class="fc" id="L550">                .filter(r -&gt; r.id().equals(i.getRequestItemId())).map(RequestItemResponse::lineNumber)</span>
+<span class="fc" id="L551">                .findFirst().orElse(null);</span>
+<span class="fc" id="L552">        return details(&quot;line&quot;, i.getLineNumber(), &quot;itemCode&quot;, i.getItemCode(), &quot;description&quot;, i.getDescription(),</span>
+<span class="fc" id="L553">                &quot;quantity&quot;, i.getQuantity(), &quot;unitPrice&quot;, i.getUnitPrice(), &quot;discountPercent&quot;, i.getDiscountPercent(),</span>
+<span class="fc" id="L554">                &quot;taxPercent&quot;, i.getTaxPercent(), &quot;lineTotal&quot;, i.getLineTotal(), &quot;requestLine&quot;, requestLine);</span>
+    }
+
+    private static String displayName(String name) {
+<span class="fc" id="L558">        String base = name.replace('\\', '/');</span>
+<span class="fc" id="L559">        return base.substring(base.lastIndexOf('/') + 1);</span>
+    }
+
+    private static byte[] readBytes(MultipartFile file) {
+        try {
+<span class="fc" id="L564">            return file.getBytes();</span>
+<span class="nc" id="L565">        } catch (IOException e) {</span>
+<span class="nc" id="L566">            throw new InvalidQuotationFileException(&quot;The uploaded file could not be read.&quot;);</span>
+        }
+    }
+
+    static String sha256(byte[] bytes) {
+        try {
+<span class="fc" id="L572">            return HexFormat.of().formatHex(MessageDigest.getInstance(&quot;SHA-256&quot;).digest(bytes));</span>
+<span class="nc" id="L573">        } catch (NoSuchAlgorithmException e) {</span>
+<span class="nc" id="L574">            throw new IllegalStateException(e);</span>
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.13.202504020838</span></div></body></html>

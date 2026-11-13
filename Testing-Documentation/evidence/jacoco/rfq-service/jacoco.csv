@@ -1,0 +1,22 @@
+GROUP,PACKAGE,CLASS,INSTRUCTION_MISSED,INSTRUCTION_COVERED,BRANCH_MISSED,BRANCH_COVERED,LINE_MISSED,LINE_COVERED,COMPLEXITY_MISSED,COMPLEXITY_COVERED,METHOD_MISSED,METHOD_COVERED
+SUTRA rfq service,com.sutra.rfq.service.impl,PurchaseRequestServiceImpl.new TransactionSynchronization() {...},0,16,0,0,0,3,0,2,0,2
+SUTRA rfq service,com.sutra.rfq.service.impl,PurchaseRequestServiceImpl,412,631,39,42,55,123,38,33,11,18
+SUTRA rfq service,com.sutra.rfq.client,QuotationClient,61,4,0,0,10,2,5,1,5,1
+SUTRA rfq service,com.sutra.rfq.client,MasterDataClient.Stats,12,0,0,0,1,0,1,0,1,0
+SUTRA rfq service,com.sutra.rfq.client,MasterDataClient,184,0,6,0,26,0,16,0,13,0
+SUTRA rfq service,com.sutra.rfq.client,MasterDataClient.CustomerSnapshot,18,0,0,0,1,0,1,0,1,0
+SUTRA rfq service,com.sutra.rfq.client,MasterDataClient.SubEntitySnapshot,18,0,0,0,1,0,1,0,1,0
+SUTRA rfq service,com.sutra.rfq.client,MasterDataClient.EntitySnapshot,0,15,0,0,0,1,0,1,0,1
+SUTRA rfq service,com.sutra.rfq.client,MasterDataClient.VendorSnapshot,15,0,0,0,1,0,1,0,1,0
+SUTRA rfq service,com.sutra.rfq.entity,UserRef,23,30,4,0,3,9,5,5,3,5
+SUTRA rfq service,com.sutra.rfq.entity,PurchaseRequest,0,61,0,6,0,12,0,9,0,6
+SUTRA rfq service,com.sutra.rfq.entity,RequestItem,0,3,0,0,0,1,0,1,0,1
+SUTRA rfq service,com.sutra.rfq.entity,NamedRef,27,22,4,0,3,8,5,4,3,4
+SUTRA rfq service,com.sutra.rfq.controller,PurchaseRequestController,39,29,0,0,7,7,6,5,6,5
+SUTRA rfq service,com.sutra.rfq.controller,InternalRfqController,57,17,2,0,8,5,8,3,7,3
+SUTRA rfq service,com.sutra.rfq.service.internal,RecordAccessPolicy,0,43,1,7,0,11,1,6,0,3
+SUTRA rfq service,com.sutra.rfq.mapper,PurchaseRequestMapper,41,82,4,4,3,13,5,2,1,2
+SUTRA rfq service,com.sutra,RfqServiceApplication,5,3,0,0,2,1,1,1,1,1
+SUTRA rfq service,com.sutra.rfq.entity.base,AuditableEntity,0,16,0,0,0,7,0,3,0,3
+SUTRA rfq service,com.sutra.rfq.entity.base,BaseEntity,0,3,0,0,0,1,0,1,0,1
+SUTRA rfq service,com.sutra.rfq.exception,PurchaseRequestNotFoundException,0,7,0,0,0,2,0,1,0,1

@@ -1,0 +1,94 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>MasterDataClient.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">SUTRA rfq service</a> &gt; <a href="index.source.html" class="el_package">com.sutra.rfq.client</a> &gt; <span class="el_source">MasterDataClient.java</span></div><h1>MasterDataClient.java</h1><pre class="source lang-java linenums"><span class="pc" id="L1">package com.sutra.rfq.client;</span>
+
+import com.sutra.common.client.InternalRestClients;
+import com.sutra.common.client.ServiceUrls;
+import com.sutra.common.error.BusinessRuleException;
+import com.sutra.common.error.ResourceNotFoundException;
+import com.sutra.common.error.ServiceUnavailableException;
+import java.util.function.Supplier;
+import org.springframework.http.HttpStatus;
+import org.springframework.stereotype.Component;
+import org.springframework.web.client.HttpClientErrorException;
+import org.springframework.web.client.RestClient;
+import org.springframework.web.client.RestClientException;
+
+/**
+ * Reads the master data (entities, sub-entities, customers, vendors) that procurement records refer to. Records
+ * keep the id and the name returned here; nothing else of master data is copied.
+ */
+@Component
+public class MasterDataClient {
+
+    public record EntitySnapshot(Long id, String code, String name, boolean active) {
+    }
+
+    public record SubEntitySnapshot(Long id, Long entityId, String code, String name, boolean active) {
+    }
+
+    public record CustomerSnapshot(Long id, String code, String name, Long entityId, boolean active) {
+    }
+
+    public record VendorSnapshot(Long id, String code, String name, boolean active) {
+    }
+
+    public record Stats(long entities, long customers, long vendors) {
+    }
+
+    private final RestClient client;
+
+<span class="nc" id="L39">    public MasterDataClient(InternalRestClients clients, ServiceUrls urls) {</span>
+<span class="nc" id="L40">        this.client = clients.forBaseUrl(urls.masterdata());</span>
+<span class="nc" id="L41">    }</span>
+
+    public EntitySnapshot entity(Long id) {
+<span class="nc" id="L44">        return get(() -&gt; client.get().uri(&quot;/internal/entities/{id}&quot;, id).retrieve().body(EntitySnapshot.class),</span>
+<span class="nc" id="L45">                &quot;Entity&quot;, id);</span>
+    }
+
+    public SubEntitySnapshot subEntity(Long entityId, Long subEntityId) {
+<span class="nc" id="L49">        return get(() -&gt; client.get().uri(&quot;/internal/entities/{e}/sub-entities/{s}&quot;, entityId, subEntityId)</span>
+<span class="nc" id="L50">                .retrieve().body(SubEntitySnapshot.class), &quot;Sub-entity&quot;, subEntityId);</span>
+    }
+
+    public CustomerSnapshot customer(Long id) {
+<span class="nc" id="L54">        return get(() -&gt; client.get().uri(&quot;/internal/customers/{id}&quot;, id).retrieve().body(CustomerSnapshot.class),</span>
+<span class="nc" id="L55">                &quot;Customer&quot;, id);</span>
+    }
+
+    public VendorSnapshot vendor(Long id) {
+<span class="nc" id="L59">        return get(() -&gt; client.get().uri(&quot;/internal/vendors/{id}&quot;, id).retrieve().body(VendorSnapshot.class),</span>
+<span class="nc" id="L60">                &quot;Vendor&quot;, id);</span>
+    }
+
+    /** The vendor, which must exist and be active to quote. */
+    public VendorSnapshot activeVendor(Long id) {
+<span class="nc" id="L65">        VendorSnapshot vendor = vendor(id);</span>
+<span class="nc bnc" id="L66" title="All 2 branches missed.">        if (!vendor.active()) {</span>
+<span class="nc" id="L67">            throw new BusinessRuleException(&quot;VENDOR_INACTIVE&quot;, vendor.name() + &quot; is inactive&quot;);</span>
+        }
+<span class="nc" id="L69">        return vendor;</span>
+    }
+
+    public Stats stats() {
+<span class="nc" id="L73">        return get(() -&gt; client.get().uri(&quot;/internal/stats&quot;).retrieve().body(Stats.class), &quot;Statistics&quot;, &quot;all&quot;);</span>
+    }
+
+    private static &lt;T&gt; T get(Supplier&lt;T&gt; call, String what, Object id) {
+        T result;
+        try {
+<span class="nc" id="L79">            result = call.get();</span>
+<span class="nc" id="L80">        } catch (HttpClientErrorException e) {</span>
+<span class="nc bnc" id="L81" title="All 2 branches missed.">            if (e.getStatusCode() == HttpStatus.NOT_FOUND) {</span>
+<span class="nc" id="L82">                throw new ResourceNotFoundException(what, id);</span>
+            }
+<span class="nc" id="L84">            throw new ServiceUnavailableException(&quot;master data service&quot;, e);</span>
+<span class="nc" id="L85">        } catch (RestClientException e) {</span>
+<span class="nc" id="L86">            throw new ServiceUnavailableException(&quot;master data service&quot;, e);</span>
+        }
+<span class="nc bnc" id="L88" title="All 2 branches missed.">        if (result == null) {</span>
+<span class="nc" id="L89">            throw new ResourceNotFoundException(what, id);</span>
+        }
+<span class="nc" id="L91">        return result;</span>
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.13.202504020838</span></div></body></html>

@@ -1,0 +1,334 @@
+<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd"><html xmlns="http://www.w3.org/1999/xhtml" lang="en"><head><meta http-equiv="Content-Type" content="text/html;charset=UTF-8"/><link rel="stylesheet" href="../jacoco-resources/report.css" type="text/css"/><link rel="shortcut icon" href="../jacoco-resources/report.gif" type="image/gif"/><title>AwardSummaryServiceImpl.java</title><link rel="stylesheet" href="../jacoco-resources/prettify.css" type="text/css"/><script type="text/javascript" src="../jacoco-resources/prettify.js"></script></head><body onload="window['PR_TAB_WIDTH']=4;prettyPrint()"><div class="breadcrumb" id="breadcrumb"><span class="info"><a href="../jacoco-sessions.html" class="el_session">Sessions</a></span><a href="../index.html" class="el_report">SUTRA reporting service</a> &gt; <a href="index.source.html" class="el_package">com.sutra.reporting.service.impl</a> &gt; <span class="el_source">AwardSummaryServiceImpl.java</span></div><h1>AwardSummaryServiceImpl.java</h1><pre class="source lang-java linenums">package com.sutra.reporting.service.impl;
+
+import com.sutra.api.rfq.PurchaseRequestResponses.PurchaseRequestResponse;
+import com.sutra.api.quotation.QuotationResponses.QuotationItemResponse;
+import com.sutra.api.quotation.QuotationResponses.QuotationResponse;
+import com.sutra.api.comparison.ComparisonResult.QuotationColumn;
+import com.sutra.api.decision.DecisionResponses.ComparisonReportResponse;
+import com.sutra.api.decision.DecisionResponses.ApprovalResponse;
+import com.sutra.reporting.client.PlatformClient;
+import com.sutra.reporting.dto.response.AwardSummary;
+import com.sutra.reporting.service.AwardSummaryService;
+import com.sutra.common.error.BusinessRuleException;
+import com.sutra.api.enums.ApprovalDecision;
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.io.UncheckedIOException;
+import java.math.BigDecimal;
+import java.time.Clock;
+import java.time.Instant;
+import java.time.LocalDate;
+import java.time.ZoneId;
+import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.List;
+import java.util.Locale;
+import org.apache.pdfbox.pdmodel.PDDocument;
+import org.apache.pdfbox.pdmodel.PDPage;
+import org.apache.pdfbox.pdmodel.PDPageContentStream;
+import org.apache.pdfbox.pdmodel.common.PDRectangle;
+import org.apache.pdfbox.pdmodel.font.PDType1Font;
+import org.apache.pdfbox.pdmodel.font.Standard14Fonts;
+import org.springframework.stereotype.Service;
+
+/**
+ * A one-page (or longer) PDF of an RFQ's decision: what was bought, from whom, at what price, who decided, when and
+ * why, and how the other compared vendors stood. Amounts are the backend's own calculations.
+ */
+@Service
+public class AwardSummaryServiceImpl implements AwardSummaryService {
+
+<span class="fc" id="L42">    private static final DateTimeFormatter DATE = DateTimeFormatter.ofPattern(&quot;dd MMM yyyy&quot;, Locale.ENGLISH);</span>
+<span class="fc" id="L43">    private static final DateTimeFormatter DATE_TIME = DateTimeFormatter.ofPattern(&quot;dd MMM yyyy, hh:mm a&quot;, Locale.ENGLISH);</span>
+    private static final float MARGIN = 48;
+<span class="fc" id="L45">    private static final float WIDTH = PDRectangle.A4.getWidth() - 2 * MARGIN;</span>
+
+    private final PlatformClient platform;
+    private final Clock clock;
+
+<span class="fc" id="L50">    public AwardSummaryServiceImpl(PlatformClient platform, Clock clock) {</span>
+<span class="fc" id="L51">        this.platform = platform;</span>
+<span class="fc" id="L52">        this.clock = clock;</span>
+<span class="fc" id="L53">    }</span>
+
+    @Override
+    public AwardSummary summary(Long purchaseRequestId) {
+<span class="fc" id="L57">        PurchaseRequestResponse pr = platform.rfq(purchaseRequestId);</span>
+<span class="fc" id="L58">        ApprovalResponse decision = platform.latestDecision(purchaseRequestId)</span>
+<span class="fc" id="L59">                .orElseThrow(() -&gt; new BusinessRuleException(&quot;NO_DECISION&quot;, pr.requestNumber() + &quot; has no award decision yet&quot;));</span>
+<span class="pc bpc" id="L60" title="1 of 2 branches missed.">        QuotationResponse selected = decision.selectedQuotationId() == null ? null</span>
+<span class="fc" id="L61">                : platform.quotation(decision.selectedQuotationId());</span>
+<span class="fc" id="L62">        ComparisonReportResponse report = platform.comparison(decision.comparisonReportId());</span>
+<span class="fc" id="L63">        try (PDDocument doc = new PDDocument(); ByteArrayOutputStream out = new ByteArrayOutputStream()) {</span>
+<span class="fc" id="L64">            Writer w = new Writer(doc);</span>
+<span class="fc" id="L65">            write(w, pr, decision, selected, report);</span>
+<span class="fc" id="L66">            w.close();</span>
+<span class="fc" id="L67">            doc.save(out);</span>
+<span class="fc" id="L68">            return new AwardSummary(pr.requestNumber() + &quot;-award-summary.pdf&quot;, out.toByteArray());</span>
+<span class="nc" id="L69">        } catch (IOException e) {</span>
+<span class="nc" id="L70">            throw new UncheckedIOException(&quot;Could not create the award summary&quot;, e);</span>
+        }
+    }
+
+    private void write(Writer w, PurchaseRequestResponse pr, ApprovalResponse a, QuotationResponse q,
+                       ComparisonReportResponse report) throws IOException {
+<span class="fc" id="L76">        ZoneId zone = clock.getZone();</span>
+<span class="pc bpc" id="L77" title="1 of 2 branches missed.">        boolean awarded = a.decision() == ApprovalDecision.APPROVED;</span>
+<span class="fc" id="L78">        w.title(&quot;SUTRA  |  Award summary&quot;);</span>
+<span class="fc" id="L79">        w.small(&quot;Generated &quot; + DATE_TIME.format(Instant.now(clock).atZone(zone)) + &quot; (&quot; + zone.getId() + &quot;)&quot;);</span>
+<span class="fc" id="L80">        w.gap(10);</span>
+
+<span class="fc" id="L82">        w.heading(pr.requestNumber() + &quot;  &quot; + pr.title());</span>
+<span class="pc bpc" id="L83" title="1 of 2 branches missed.">        w.pair(&quot;Entity&quot;, pr.entityName() + (pr.subEntityName() == null ? &quot;&quot; : &quot; / &quot; + pr.subEntityName()));</span>
+<span class="pc bpc" id="L84" title="1 of 2 branches missed.">        if (pr.customerName() != null) {</span>
+<span class="nc" id="L85">            w.pair(&quot;Customer&quot;, pr.customerName());</span>
+        }
+<span class="fc" id="L87">        w.pair(&quot;Requested by&quot;, pr.requestedBy());</span>
+<span class="fc" id="L88">        w.pair(&quot;Currency&quot;, pr.currency());</span>
+<span class="fc" id="L89">        w.pair(&quot;Required by&quot;, date(pr.requiredBy()));</span>
+<span class="pc bpc" id="L90" title="1 of 2 branches missed.">        if (pr.quotationsDue() != null) {</span>
+<span class="nc" id="L91">            w.pair(&quot;Quotations due&quot;, date(pr.quotationsDue()));</span>
+        }
+<span class="fc" id="L93">        w.gap(8);</span>
+
+<span class="pc bpc" id="L95" title="1 of 2 branches missed.">        w.heading(awarded ? &quot;Decision: AWARDED&quot; : &quot;Decision: REJECTED&quot;);</span>
+<span class="pc bpc" id="L96" title="2 of 4 branches missed.">        if (awarded &amp;&amp; q != null) {</span>
+<span class="fc" id="L97">            w.pair(&quot;Vendor&quot;, q.vendorName());</span>
+<span class="pc bpc" id="L98" title="1 of 2 branches missed.">            w.pair(&quot;Quotation&quot;, nz(q.quotationNumber()) + (q.quotationDate() == null ? &quot;&quot; : &quot; dated &quot; + date(q.quotationDate())));</span>
+<span class="fc" id="L99">            w.pair(&quot;Valid until&quot;, date(q.validUntil()));</span>
+        }
+<span class="fc" id="L101">        w.pair(&quot;Decided by&quot;, a.decidedBy());</span>
+<span class="fc" id="L102">        w.pair(&quot;Decided on&quot;, DATE_TIME.format(a.decidedAt().atZone(zone)));</span>
+<span class="fc" id="L103">        w.pair(&quot;Reason&quot;, nz(a.reason()));</span>
+<span class="fc" id="L104">        w.gap(8);</span>
+
+<span class="pc bpc" id="L106" title="2 of 4 branches missed.">        if (awarded &amp;&amp; q != null) {</span>
+<span class="pc bpc" id="L107" title="1 of 2 branches missed.">            String cur = q.currency() == null ? pr.currency() : q.currency();</span>
+<span class="fc" id="L108">            w.heading(&quot;Items awarded&quot;);</span>
+<span class="fc" id="L109">            float[] cols = {22, 60, 175, 52, 40, 72, 38, 80};</span>
+<span class="fc" id="L110">            w.row(cols, true, &quot;#&quot;, &quot;Code&quot;, &quot;Description&quot;, &quot;Qty&quot;, &quot;Unit&quot;, &quot;Unit price&quot;, &quot;Tax %&quot;, &quot;Line total&quot;);</span>
+<span class="fc" id="L111">            List&lt;QuotationItemResponse&gt; items = new ArrayList&lt;&gt;(q.items());</span>
+<span class="fc" id="L112">            items.sort(Comparator.comparing(QuotationItemResponse::lineNumber));</span>
+<span class="fc bfc" id="L113" title="All 2 branches covered.">            for (QuotationItemResponse i : items) {</span>
+<span class="fc" id="L114">                w.row(cols, false, String.valueOf(i.lineNumber()), nz(i.itemCode()), i.description(),</span>
+<span class="fc" id="L115">                        num(i.quantity()), nz(i.unitOfMeasure()), money(i.unitPrice(), cur),</span>
+<span class="fc" id="L116">                        num(i.taxPercent()), money(i.lineTotal(), cur));</span>
+            }
+<span class="fc" id="L118">            w.gap(6);</span>
+<span class="fc" id="L119">            w.pair(&quot;Subtotal&quot;, money(q.subtotal(), cur));</span>
+<span class="fc" id="L120">            w.pair(&quot;Discount&quot;, money(q.discountTotal(), cur));</span>
+<span class="fc" id="L121">            w.pair(&quot;Tax&quot;, money(q.taxTotal(), cur));</span>
+<span class="fc" id="L122">            w.pairBold(&quot;Grand total&quot;, money(q.grandTotal(), cur));</span>
+<span class="fc" id="L123">            w.gap(4);</span>
+<span class="pc bpc" id="L124" title="1 of 2 branches missed.">            if (q.deliveryTerms() != null) {</span>
+<span class="fc" id="L125">                w.pair(&quot;Delivery&quot;, q.deliveryTerms());</span>
+            }
+<span class="pc bpc" id="L127" title="1 of 2 branches missed.">            if (q.paymentTerms() != null) {</span>
+<span class="fc" id="L128">                w.pair(&quot;Payment&quot;, q.paymentTerms());</span>
+            }
+<span class="pc bpc" id="L130" title="1 of 2 branches missed.">            if (q.warrantyTerms() != null) {</span>
+<span class="nc" id="L131">                w.pair(&quot;Warranty&quot;, q.warrantyTerms());</span>
+            }
+<span class="fc" id="L133">            w.gap(8);</span>
+        }
+
+<span class="pc bpc" id="L136" title="2 of 4 branches missed.">        if (report != null &amp;&amp; report.result() != null) {</span>
+<span class="fc" id="L137">            w.heading(&quot;Comparison version &quot; + report.reportVersion());</span>
+<span class="fc" id="L138">            float[] cols = {40, 230, 120, 80, 69};</span>
+<span class="fc" id="L139">            w.row(cols, true, &quot;Rank&quot;, &quot;Vendor&quot;, &quot;Grand total&quot;, &quot;Items quoted&quot;, &quot;Missing&quot;);</span>
+<span class="fc" id="L140">            List&lt;QuotationColumn&gt; rows = new ArrayList&lt;&gt;(report.result().quotations());</span>
+<span class="pc bpc" id="L141" title="1 of 2 branches missed.">            rows.sort(Comparator.comparing((QuotationColumn c) -&gt; c.priceRank() == null ? Integer.MAX_VALUE : c.priceRank()));</span>
+<span class="fc bfc" id="L142" title="All 2 branches covered.">            for (QuotationColumn c : rows) {</span>
+<span class="pc bpc" id="L143" title="1 of 2 branches missed.">                String cur = c.currency() == null ? pr.currency() : c.currency();</span>
+<span class="pc bpc" id="L144" title="1 of 4 branches missed.">                boolean chosen = q != null &amp;&amp; c.quotationId().equals(q.id());</span>
+<span class="pc bpc" id="L145" title="1 of 2 branches missed.">                w.row(cols, chosen, c.priceRank() == null ? &quot;-&quot; : String.valueOf(c.priceRank()),</span>
+<span class="fc bfc" id="L146" title="All 2 branches covered.">                        c.vendorName() + (chosen ? &quot;  (awarded)&quot; : &quot;&quot;), money(c.grandTotal(), cur),</span>
+<span class="fc" id="L147">                        String.valueOf(c.itemsQuoted()), String.valueOf(c.itemsMissing()));</span>
+            }
+<span class="fc" id="L149">            w.gap(8);</span>
+        }
+<span class="fc" id="L151">        w.small(&quot;Totals are calculated by SUTRA from the quoted lines, not taken from the documents or the AI. &quot;</span>
+                + &quot;The decision was recorded by an authorised user; SUTRA never selects or approves a vendor.&quot;);
+<span class="fc" id="L153">    }</span>
+
+    private static String date(LocalDate d) {
+<span class="fc bfc" id="L156" title="All 2 branches covered.">        return d == null ? &quot;-&quot; : DATE.format(d);</span>
+    }
+
+    private static String nz(String s) {
+<span class="pc bpc" id="L160" title="1 of 4 branches missed.">        return s == null || s.isBlank() ? &quot;-&quot; : s;</span>
+    }
+
+    private static String num(BigDecimal v) {
+<span class="pc bpc" id="L164" title="1 of 2 branches missed.">        return v == null ? &quot;-&quot; : v.stripTrailingZeros().toPlainString();</span>
+    }
+
+    /** &quot;INR 17,78,260.00&quot; (Indian grouping), via the assistant's formatter; the PDF font has no rupee sign. */
+    static String money(BigDecimal v, String currency) {
+<span class="fc" id="L169">        String s = AssistantServiceImpl.money(v, currency);</span>
+<span class="pc bpc" id="L170" title="1 of 2 branches missed.">        return s == null ? &quot;-&quot; : s.replace(&quot;₹&quot;, &quot;INR &quot;);</span>
+    }
+
+    /** Writes lines top to bottom, starting a new page when one is full. */
+    private static final class Writer {
+        private final PDDocument doc;
+<span class="fc" id="L176">        private final PDType1Font regular = new PDType1Font(Standard14Fonts.FontName.HELVETICA);</span>
+<span class="fc" id="L177">        private final PDType1Font bold = new PDType1Font(Standard14Fonts.FontName.HELVETICA_BOLD);</span>
+        private PDPageContentStream out;
+        private float y;
+
+<span class="fc" id="L181">        Writer(PDDocument doc) throws IOException {</span>
+<span class="fc" id="L182">            this.doc = doc;</span>
+<span class="fc" id="L183">            newPage();</span>
+<span class="fc" id="L184">        }</span>
+
+        private void newPage() throws IOException {
+<span class="pc bpc" id="L187" title="1 of 2 branches missed.">            if (out != null) {</span>
+<span class="nc" id="L188">                out.close();</span>
+            }
+<span class="fc" id="L190">            PDPage page = new PDPage(PDRectangle.A4);</span>
+<span class="fc" id="L191">            doc.addPage(page);</span>
+<span class="fc" id="L192">            out = new PDPageContentStream(doc, page);</span>
+<span class="fc" id="L193">            y = PDRectangle.A4.getHeight() - MARGIN;</span>
+<span class="fc" id="L194">        }</span>
+
+        private void need(float height) throws IOException {
+<span class="pc bpc" id="L197" title="1 of 2 branches missed.">            if (y - height &lt; MARGIN) {</span>
+<span class="nc" id="L198">                newPage();</span>
+            }
+<span class="fc" id="L200">        }</span>
+
+        void close() throws IOException {
+<span class="fc" id="L203">            out.close();</span>
+<span class="fc" id="L204">        }</span>
+
+        void gap(float h) {
+<span class="fc" id="L207">            y -= h;</span>
+<span class="fc" id="L208">        }</span>
+
+        void title(String text) throws IOException {
+<span class="fc" id="L211">            need(24);</span>
+<span class="fc" id="L212">            out.setNonStrokingColor(1f, 0f, 0f);</span>
+<span class="fc" id="L213">            text(bold, 16, MARGIN, text);</span>
+<span class="fc" id="L214">            out.setNonStrokingColor(0f, 0f, 0f);</span>
+<span class="fc" id="L215">            y -= 20;</span>
+<span class="fc" id="L216">        }</span>
+
+        void heading(String text) throws IOException {
+<span class="fc" id="L219">            need(20);</span>
+<span class="fc bfc" id="L220" title="All 2 branches covered.">            for (String line : wrap(bold, 11, text, WIDTH)) {</span>
+<span class="fc" id="L221">                text(bold, 11, MARGIN, line);</span>
+<span class="fc" id="L222">                y -= 15;</span>
+            }
+<span class="fc" id="L224">            out.setStrokingColor(1f, 0f, 0f);</span>
+<span class="fc" id="L225">            out.moveTo(MARGIN, y + 11);</span>
+<span class="fc" id="L226">            out.lineTo(MARGIN + WIDTH, y + 11);</span>
+<span class="fc" id="L227">            out.stroke();</span>
+<span class="fc" id="L228">            y -= 3;</span>
+<span class="fc" id="L229">        }</span>
+
+        void small(String text) throws IOException {
+<span class="fc bfc" id="L232" title="All 2 branches covered.">            for (String line : wrap(regular, 8, text, WIDTH)) {</span>
+<span class="fc" id="L233">                need(11);</span>
+<span class="fc" id="L234">                text(regular, 8, MARGIN, line);</span>
+<span class="fc" id="L235">                y -= 11;</span>
+            }
+<span class="fc" id="L237">        }</span>
+
+        void pair(String label, String value) throws IOException {
+<span class="fc" id="L240">            pair(label, value, regular);</span>
+<span class="fc" id="L241">        }</span>
+
+        void pairBold(String label, String value) throws IOException {
+<span class="fc" id="L244">            pair(label, value, bold);</span>
+<span class="fc" id="L245">        }</span>
+
+        private void pair(String label, String value, PDType1Font font) throws IOException {
+<span class="fc" id="L248">            List&lt;String&gt; lines = wrap(font, 9.5f, value, WIDTH - 110);</span>
+<span class="fc" id="L249">            need(13f * lines.size());</span>
+<span class="fc" id="L250">            text(bold, 9.5f, MARGIN, label);</span>
+<span class="fc bfc" id="L251" title="All 2 branches covered.">            for (String line : lines) {</span>
+<span class="fc" id="L252">                text(font, 9.5f, MARGIN + 110, line);</span>
+<span class="fc" id="L253">                y -= 13;</span>
+            }
+<span class="fc" id="L255">        }</span>
+
+        /** One table row; text in each column wraps, and the row is as tall as its tallest cell. */
+        void row(float[] widths, boolean strong, String... cells) throws IOException {
+<span class="fc bfc" id="L259" title="All 2 branches covered.">            PDType1Font font = strong ? bold : regular;</span>
+<span class="fc" id="L260">            List&lt;List&lt;String&gt;&gt; wrapped = new ArrayList&lt;&gt;();</span>
+<span class="fc" id="L261">            int lines = 1;</span>
+<span class="fc bfc" id="L262" title="All 2 branches covered.">            for (int c = 0; c &lt; cells.length; c++) {</span>
+<span class="fc" id="L263">                List&lt;String&gt; w = wrap(font, 8.5f, cells[c], widths[c] - 4);</span>
+<span class="fc" id="L264">                wrapped.add(w);</span>
+<span class="fc" id="L265">                lines = Math.max(lines, w.size());</span>
+            }
+<span class="fc" id="L267">            need(11f * lines + 4);</span>
+<span class="fc" id="L268">            float x = MARGIN;</span>
+<span class="fc bfc" id="L269" title="All 2 branches covered.">            for (int c = 0; c &lt; cells.length; c++) {</span>
+<span class="fc" id="L270">                float ly = y;</span>
+<span class="fc bfc" id="L271" title="All 2 branches covered.">                for (String line : wrapped.get(c)) {</span>
+<span class="fc" id="L272">                    textAt(font, 8.5f, x, ly, line);</span>
+<span class="fc" id="L273">                    ly -= 11;</span>
+                }
+<span class="fc" id="L275">                x += widths[c];</span>
+            }
+<span class="fc" id="L277">            y -= 11f * lines + 2;</span>
+<span class="fc" id="L278">            out.setStrokingColor(0.85f, 0.85f, 0.85f);</span>
+<span class="fc" id="L279">            out.moveTo(MARGIN, y + 8);</span>
+<span class="fc" id="L280">            out.lineTo(MARGIN + WIDTH, y + 8);</span>
+<span class="fc" id="L281">            out.stroke();</span>
+<span class="fc" id="L282">            y -= 2;</span>
+<span class="fc" id="L283">        }</span>
+
+        private void text(PDType1Font font, float size, float x, String s) throws IOException {
+<span class="fc" id="L286">            textAt(font, size, x, y, s);</span>
+<span class="fc" id="L287">        }</span>
+
+        private void textAt(PDType1Font font, float size, float x, float atY, String s) throws IOException {
+<span class="fc" id="L290">            out.beginText();</span>
+<span class="fc" id="L291">            out.setFont(font, size);</span>
+<span class="fc" id="L292">            out.newLineAtOffset(x, atY);</span>
+<span class="fc" id="L293">            out.showText(safe(font, s));</span>
+<span class="fc" id="L294">            out.endText();</span>
+<span class="fc" id="L295">        }</span>
+
+        private static List&lt;String&gt; wrap(PDType1Font font, float size, String text, float width) throws IOException {
+<span class="fc" id="L298">            List&lt;String&gt; lines = new ArrayList&lt;&gt;();</span>
+<span class="pc bpc" id="L299" title="1 of 2 branches missed.">            String clean = safe(font, text == null ? &quot;&quot; : text);</span>
+<span class="fc bfc" id="L300" title="All 2 branches covered.">            for (String paragraph : clean.split(&quot;\n&quot;)) {</span>
+<span class="fc" id="L301">                StringBuilder line = new StringBuilder();</span>
+<span class="fc bfc" id="L302" title="All 2 branches covered.">                for (String word : paragraph.split(&quot; &quot;)) {</span>
+<span class="fc bfc" id="L303" title="All 2 branches covered.">                    String candidate = line.isEmpty() ? word : line + &quot; &quot; + word;</span>
+<span class="pc bpc" id="L304" title="1 of 4 branches missed.">                    if (font.getStringWidth(candidate) / 1000 * size &lt;= width || line.isEmpty()) {</span>
+<span class="fc" id="L305">                        line.setLength(0);</span>
+<span class="fc" id="L306">                        line.append(candidate);</span>
+<span class="fc" id="L307">                    } else {</span>
+<span class="fc" id="L308">                        lines.add(line.toString());</span>
+<span class="fc" id="L309">                        line.setLength(0);</span>
+<span class="fc" id="L310">                        line.append(word);</span>
+                    }
+                }
+<span class="fc" id="L313">                lines.add(line.toString());</span>
+            }
+<span class="fc" id="L315">            return lines;</span>
+        }
+
+        /** The standard PDF fonts only cover Latin text: anything else (e.g. Devanagari) becomes '?'. */
+        private static String safe(PDType1Font font, String s) {
+<span class="fc" id="L320">            StringBuilder b = new StringBuilder();</span>
+<span class="fc" id="L321">            s.codePoints().forEach(cp -&gt; {</span>
+<span class="fc" id="L322">                String ch = new String(Character.toChars(cp));</span>
+                try {
+<span class="fc" id="L324">                    font.encode(ch);</span>
+<span class="fc" id="L325">                    b.append(ch);</span>
+<span class="pc" id="L326">                } catch (IOException | IllegalArgumentException e) {</span>
+<span class="nc bnc" id="L327" title="All 2 branches missed.">                    b.append(cp == '\t' ? &quot; &quot; : &quot;?&quot;);</span>
+                }
+<span class="fc" id="L329">            });</span>
+<span class="fc" id="L330">            return b.toString();</span>
+        }
+    }
+}
+</pre><div class="footer"><span class="right">Created with <a href="http://www.jacoco.org/jacoco">JaCoCo</a> 0.8.13.202504020838</span></div></body></html>
